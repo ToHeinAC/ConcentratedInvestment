@@ -2,6 +2,7 @@
 
 import pandas as pd
 
+from concinvest import config
 from concinvest.backtest import engine
 from concinvest.features import cross_asset
 from concinvest.ml import dataset, forecast, model
@@ -89,6 +90,14 @@ def test_rules_backtest_produces_curve(synth_market, synth_raw):
     assert len(res.curve) > 50
     assert (res.curve["portfolio"] > 0).all()  # book never goes negative
     assert isinstance(res.beats_benchmark, bool)
+
+
+def test_target_exposure_base_case_faithful():
+    base = config.BASE_STOCK_ALLOCATION
+    assert engine._target_exposure(0.5) == base   # neutral -> full base case
+    assert engine._target_exposure(0.9) == base   # bullish -> capped at base
+    assert abs(engine._target_exposure(0.25) - base * 0.5) < 1e-9  # bearish -> de-risk
+    assert engine._target_exposure(0.0) == 0.0
 
 
 def test_forecast_backtest_produces_curve(synth_market, synth_raw):

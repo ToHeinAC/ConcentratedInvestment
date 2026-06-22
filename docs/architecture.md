@@ -117,9 +117,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   portfolio/benchmark returns + `beats_benchmark`): `run_backtest()` (Phase 1
   confidence-scaled equal-weight basket), `run_rules_backtest()` (base-case leveraged
   book under guardrails, sell-side only), and `run_forecast_backtest()` — **the
-  pipeline's backtest** — the leveraged book whose target equity exposure tracks the
-  model's mean buy-confidence (lagged, scaled by the 90% base allocation) with a
-  `REBALANCE_BAND` dead-band, cash re-entry, daily guardrails, and German tax.
+  pipeline's backtest** — the leveraged book whose target equity exposure follows
+  `_target_exposure(mean buy-confidence)`: it holds the 90% base case while the model
+  is neutral-to-bullish (≥ 0.5) and only de-risks below 0.5, with a `REBALANCE_BAND`
+  dead-band, cash re-entry, daily guardrails, and German tax.
 
 ### `app/`
 - **`streamlit_app.py`** — UI: forecast table, portfolio-vs-NASDAQ curve, live

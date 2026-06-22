@@ -108,14 +108,18 @@ history (no historical news feed) and filled live at forecast time.
   `MIN_IMPORTANCE` (action encoding always kept); `tune_and_train(prune=True)` refits
   on the reduced set. `FEATURE_COLS` stays the stable superset callers build;
   `TrainedModel.features` records the columns actually used.
-- **Live result (validation year, `--n 10000`)** — portfolio **+15.2%** vs NASDAQ
-  **+35.2%** → below benchmark. Diagnosis: the RF's mean buy-confidence sits ~0.55
-  (CV AUC ~0.57), so `target = 0.9 × confidence` parks the book ~50% in cash and
-  structurally lags a +35% market. The headline "beat NASDAQ" target is **not yet
-  met**; the lever is the confidence→exposure mapping (see Open).
-- **Open** — make the exposure mapping faithful to the base case (stay ~90% invested
-  unless a genuine bearish/risk signal fires) rather than scaling linearly by a
-  near-0.5 confidence — without overfitting to the single validation year.
+- **Exposure mapping** — `backtest._target_exposure` holds the 90% base case while
+  mean buy-confidence is neutral-to-bullish (≥ 0.5, the classifier's natural
+  boundary) and only de-risks proportionally below 0.5. Principled (not tuned to the
+  validation year); the drawdown guardrail still handles crashes independently.
+- **Live result (validation year, `--n 10000`)** — portfolio **+28.8%** vs NASDAQ
+  **+34.9%** → still ~6pp below (was +15.2% under the old linear-confidence mapping).
+  The base case keeps the book ~90% invested, capturing most of the rally; the
+  residual gap is the mandated 10% cash, tax on rebalancing trims, and the basket
+  (DE/JP/commodity names) simply not matching NASDAQ tech in this particular year.
+- **Open** — the "beat NASDAQ" target is **not met over this single +35% year**;
+  honest next steps are multi-window validation and basket/leverage review rather than
+  fitting the one window.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -140,7 +144,7 @@ history (no historical news feed) and filled live at forecast time.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 41 tests, offline (synthetic fixtures)
+uv run pytest                                   # 42 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
@@ -161,8 +165,9 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 - **Phase 3** (🔄) — done: time-ordered generator (100k-capable), honest
   date-based train/validate split, TSCV hyperparameter tuning, feature-importance
-  pruning. Remaining: reach validation return > NASDAQ — live read is +15.2% vs
-  +35.2%; the lever is a base-case-faithful confidence→exposure mapping (§5c Open).
+  pruning, base-case-faithful exposure mapping. Remaining: reach validation return >
+  NASDAQ — live read is +28.8% vs +34.9% (was +15.2%); next is multi-window
+  validation rather than fitting the single +35% year (§5c).
 - **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
   `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
   sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven

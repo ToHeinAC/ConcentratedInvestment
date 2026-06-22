@@ -128,6 +128,21 @@ def run_rules_backtest(
     return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret)
 
 
+# Classifier-neutral confidence: at/above this the model is not bearish, so the
+# book stays fully at the base-case allocation; below it we de-risk toward cash.
+_NEUTRAL_CONF: float = 0.5
+
+
+def _target_exposure(confidence: float) -> float:
+    """Base-case-faithful target equity fraction from mean buy-confidence.
+
+    Holds the 90% base case while the model is neutral-to-bullish
+    (``confidence >= 0.5``); only a bearish read (< 0.5) scales exposure down
+    proportionally toward cash. The drawdown guardrail de-risks crashes separately.
+    """
+    return config.BASE_STOCK_ALLOCATION * min(1.0, confidence / _NEUTRAL_CONF)
+
+
 def _rebalance_to_target(state: pstate.PortfolioState, target_frac: float, stocks: list[str]) -> None:
     """Nudge invested fraction toward ``target_frac`` within the daily move cap.
 
@@ -187,7 +202,7 @@ def run_forecast_backtest(
     for date, row in rets.iterrows():
         state.mark(row.to_dict())
         rules.apply_guardrails(state)
-        target = config.BASE_STOCK_ALLOCATION * float(exposure.get(date, 1.0))
+        target = _target_exposure(float(exposure.get(date, 1.0)))
         _rebalance_to_target(state, target, stocks)
         values.append(state.total_value())
 
