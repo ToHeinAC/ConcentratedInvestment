@@ -13,6 +13,7 @@ import pandas as pd
 
 from . import config
 from .backtest.engine import BacktestResult, run_forecast_backtest
+from .backtest.walkforward import WalkForwardResult, walk_forward_validate
 from .data import fetch, store, tickers
 from .features import analyst, cross_asset, technical
 from .ml import dataset, forecast, model
@@ -155,4 +156,32 @@ def run_phase1(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,
         sentiment=sentiment_df,
+    )
+
+
+def _nasdaq_series(raw: dict, market: dict) -> pd.Series:
+    """NASDAQ close, falling back to the stock-basket mean if the benchmark is absent."""
+    if config.BENCHMARK_TICKER in raw:
+        return raw[config.BENCHMARK_TICKER]["close"]
+    return pd.DataFrame({t: df["close"] for t, df in market.items()}).mean(axis=1)
+
+
+def run_walkforward(
+    start: _dt.date | str = config.START_DATE,
+    end: _dt.date | str | None = None,
+    n_dataset: int = 10_000,
+    horizon: int = 20,
+    n_windows: int = 4,
+    window: int = 252,
+    tune: bool = True,
+    db_path=None,
+) -> WalkForwardResult:
+    """Fetch the universe and run walk-forward validation vs NASDAQ."""
+    market, cross, raw = fetch_and_store(tickers.ALL_TICKERS, start=start, end=end, db_path=db_path)
+    panel = dataset.build_feature_panel(market, cross)
+    prices = {t: pd.Series(df["close"].values, index=pd.to_datetime(df.index))
+              for t, df in market.items()}
+    return walk_forward_validate(
+        market, _nasdaq_series(raw, market), panel, prices,
+        n_windows=n_windows, window=window, n_dataset=n_dataset, horizon=horizon, tune=tune,
     )

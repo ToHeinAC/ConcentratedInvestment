@@ -48,7 +48,7 @@ data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite)
 features/  technical.py · cross_asset.py · sentiment.py (VADER/FinBERT) · analyst.py · options.py
 ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields)
 portfolio/ state.py (leveraged lots+cash) · tax.py (Abgeltungsteuer) · rules.py (guardrails)
-backtest/  engine.py (forecast-driven + rules-based leveraged portfolio vs NASDAQ)
+backtest/  engine.py (forecast-driven + rules-based portfolio) · walkforward.py (multi-window)
 app/       streamlit_app.py · exit_button.py
 config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 ```
@@ -112,14 +112,28 @@ history (no historical news feed) and filled live at forecast time.
   mean buy-confidence is neutral-to-bullish (≥ 0.5, the classifier's natural
   boundary) and only de-risks proportionally below 0.5. Principled (not tuned to the
   validation year); the drawdown guardrail still handles crashes independently.
-- **Live result (validation year, `--n 10000`)** — portfolio **+28.8%** vs NASDAQ
-  **+34.9%** → still ~6pp below (was +15.2% under the old linear-confidence mapping).
-  The base case keeps the book ~90% invested, capturing most of the rally; the
-  residual gap is the mandated 10% cash, tax on rebalancing trims, and the basket
-  (DE/JP/commodity names) simply not matching NASDAQ tech in this particular year.
-- **Open** — the "beat NASDAQ" target is **not met over this single +35% year**;
-  honest next steps are multi-window validation and basket/leverage review rather than
-  fitting the one window.
+- **Live result (last validation year, `--n 10000`)** — portfolio **+28.8%** vs
+  NASDAQ **+34.9%** under the base-case-faithful mapping (was +15.2% under the old
+  linear-confidence one).
+- **Walk-forward validation** (`concinvest validate`, `backtest.walkforward`) — the
+  single-year read is misleading. Across four trained-then-tested 1-year windows
+  (`--n 10000`):
+
+  | window | portfolio | NASDAQ | vs |
+  |--------|-----------|--------|----|
+  | 2022-08→2023-07 | +45.2% | +11.9% | **+33.4** |
+  | 2023-07→2024-07 | +21.5% | +30.2% | −8.7 |
+  | 2024-07→2025-07 | −20.2% | +10.4% | −30.6 |
+  | 2025-07→2026-06 | +25.7% | +28.7% | −3.0 |
+
+  **Win rate 25% (1/4), mean outperformance −2.3%.** The strategy is high-variance:
+  it crushed the 2022-23 value/commodity rotation but lost 20% absolute in 2024-25 —
+  notably, the 20%-drawdown guardrail under-protected, because 2x/3x leverage drops
+  faster than the 10%/day de-risk cap can unwind.
+- **Open** — "beat NASDAQ" is **not robustly met** (the single +35% window was one of
+  the *better* outcomes). Honest next steps: stronger risk control (Phase 4 crisis
+  path; faster/leverage-aware de-risk) and a basket/leverage review — not fitting one
+  window.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -144,8 +158,9 @@ history (no historical news feed) and filled live at forecast time.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 42 tests, offline (synthetic fixtures)
+uv run pytest                                   # 44 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
+uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
 
@@ -155,7 +170,7 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
   train + 5-field forecast, backtest curve, portfolio state/tax/guardrails +
-  rules-based backtest.
+  rules-based & forecast-driven backtests, walk-forward window construction.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -165,9 +180,10 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 - **Phase 3** (🔄) — done: time-ordered generator (100k-capable), honest
   date-based train/validate split, TSCV hyperparameter tuning, feature-importance
-  pruning, base-case-faithful exposure mapping. Remaining: reach validation return >
-  NASDAQ — live read is +28.8% vs +34.9% (was +15.2%); next is multi-window
-  validation rather than fitting the single +35% year (§5c).
+  pruning, base-case-faithful exposure mapping, walk-forward validation
+  (`concinvest validate`). Remaining: reach validation return > NASDAQ — walk-forward
+  win rate is 25% (1/4), mean −2.3%; high variance with a −20% window where leverage
+  out-ran the de-risk cap. Next is risk control + basket/leverage review (§5c).
 - **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
   `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
   sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven

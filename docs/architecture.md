@@ -121,6 +121,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `_target_exposure(mean buy-confidence)`: it holds the 90% base case while the model
   is neutral-to-bullish (≥ 0.5) and only de-risks below 0.5, with a `REBALANCE_BAND`
   dead-band, cash re-entry, daily guardrails, and German tax.
+- **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
+  consecutive `window`-day windows (model trained only on prior data, with a horizon
+  embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`
+  with per-window returns + `win_rate` / `mean_outperformance`. Surfaced by
+  `concinvest validate`; the honest read vs any single-year backtest.
 
 ### `app/`
 - **`streamlit_app.py`** — UI: forecast table, portfolio-vs-NASDAQ curve, live
@@ -133,7 +138,7 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`config.py`** — paths, dates (`START_DATE` 2020-01-01), portfolio/risk/tax
   constants, `BENCHMARK_TICKER` (`^IXIC`), `STREAMLIT_PORT` (8505).
 - **`pipeline.py`** — `run_phase1` / `fetch_and_store` orchestration.
-- **`cli.py`** — `concinvest {info,update,run}`.
+- **`cli.py`** — `concinvest {info,update,run,validate}`.
 
 ## Key design decisions
 

@@ -182,16 +182,18 @@ def run_forecast_backtest(
     model: TrainedModel,
     panel: pd.DataFrame,
     start: str | None = None,
+    end: str | None = None,
     capital: float = config.INITIAL_CAPITAL_EUR,
 ) -> BacktestResult:
     """Rules + forecast backtest: the base-case leveraged book whose target equity
     exposure tracks the model's mean buy-confidence (lagged, scaled by the 90% base
-    allocation), with cash re-entry, daily guardrails, and German tax."""
+    allocation), with cash re-entry, daily guardrails, and German tax. ``start``/``end``
+    bound the window (inclusive)."""
     closes = pd.DataFrame({t: df["close"] for t, df in market.items()})
     closes.index = pd.to_datetime(closes.index)
     closes = closes.sort_index()
-    if start:
-        closes = closes.loc[start:]
+    if start is not None or end is not None:
+        closes = closes.loc[start:end]
     rets = closes.pct_change().fillna(0.0)
     dates = pd.DatetimeIndex(rets.index)
 

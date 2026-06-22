@@ -30,6 +30,14 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--no-tune", dest="tune", action="store_false",
                        help="skip TimeSeriesSplit hyperparameter tuning")
 
+    p_val = sub.add_parser("validate", help="Walk-forward (multi-window) validation vs NASDAQ")
+    p_val.add_argument("--start", default=str(config.START_DATE))
+    p_val.add_argument("--n", type=int, default=10000, help="synthetic datapoints")
+    p_val.add_argument("--windows", type=int, default=4, help="number of validation windows")
+    p_val.add_argument("--window", type=int, default=252, help="window length in trading days")
+    p_val.add_argument("--no-tune", dest="tune", action="store_false",
+                       help="skip per-fold hyperparameter tuning (faster)")
+
     args = parser.parse_args(argv)
 
     if args.command == "info":
@@ -64,6 +72,23 @@ def main(argv: list[str] | None = None) -> int:
         print("forecast:")
         fc = forecasts_to_frame(res.forecasts)
         print(fc.to_string(index=False) if not fc.empty else "  hold (no trade triggered)")
+        return 0
+
+    if args.command == "validate":
+        from .pipeline import run_walkforward
+
+        res = run_walkforward(start=args.start, n_dataset=args.n,
+                              n_windows=args.windows, window=args.window, tune=args.tune)
+        if res.windows.empty:
+            print("no validation windows (insufficient history)")
+            return 0
+        df = res.windows.copy()
+        for col in ("portfolio", "benchmark", "outperformance"):
+            df[col] = df[col].map(lambda v: f"{v:+.1%}")
+        print(df.to_string(index=False))
+        print(f"\nwin rate vs NASDAQ: {res.win_rate:.0%} "
+              f"({int(res.windows['beats'].sum())}/{len(res.windows)}) | "
+              f"mean outperformance: {res.mean_outperformance:+.1%}")
         return 0
 
     parser.print_help()
