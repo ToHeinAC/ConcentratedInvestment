@@ -35,7 +35,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 | **0** | Scaffold: package, config, tickers, CLI, tests, Docker, exit button | ✅ done |
 | **1** | Thin end-to-end slice (all layers, sentiment-aware) | ✅ done |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
-| **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | ⏳ planned |
+| **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | 🔄 in progress |
 | **4** | Full rules engine (allocation/risk/leverage/drawdown/trim) + German tax, in backtest | ⏳ planned |
 | **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | ⏳ planned |
 
@@ -91,11 +91,27 @@ history (no historical news feed) and filled live at forecast time.
 - **Additive migrations** — `store._migrate` `ALTER TABLE`s the new columns onto
   pre-Phase-2 databases idempotently; no rebuild required.
 
+## 5c. Phase 3 design notes (in progress)
+
+- **Time-honest dataset** — `generate_dataset` returns rows **sorted by snapshot
+  date** (DatetimeIndex), so `TimeSeriesSplit` CV is valid. `n` is now arbitrary;
+  the Story.md 100k run is `concinvest run --n 100000`.
+- **Honest validation** — `train_validate_split` carves the last
+  `VALIDATION_YEARS` off by calendar date. `run_phase1` trains **only on the
+  pre-validation split**, so the validation-window backtest is true out-of-sample
+  (previously the model saw the backtest window — leakage, now fixed).
+- **Tuning** — `model.tune` / `tune_and_train` pick the best `PARAM_GRID` entry by
+  mean TSCV ROC-AUC; `concinvest run` tunes by default (`--no-tune` to skip), and
+  prints the chosen params. Selected params live on `TrainedModel.params`.
+- **Open** — feature-importance-driven pruning of `FEATURE_COLS`, and the headline
+  "beat NASDAQ" target, which is **gated on the Phase 4 allocation/leverage/tax
+  engine** (the current confidence-scaled basket is not expected to clear NASDAQ).
+
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 26 tests, offline (synthetic fixtures)
+uv run pytest                                   # 29 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
@@ -104,7 +120,8 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   indicators vs known values, cross-asset ratios (incl. VVIX/GSCI/10y-5y spread),
   sentiment scaling, SQLite upsert/read roundtrip, additive schema migration, pure
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
-  shape/balance/no-leakage, model train + 5-field forecast, backtest curve.
+  shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
+  train + 5-field forecast, backtest curve.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -112,8 +129,10 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 ## 7. Remaining phases — detail
 
-- **Phase 3** — `ml.dataset` 100k generator; tune RandomForest via TimeSeriesSplit;
-  feature-importance-driven selection; target: validation return > NASDAQ.
+- **Phase 3** (🔄) — done: time-ordered generator (100k-capable), honest
+  date-based train/validate split, TSCV hyperparameter tuning. Remaining:
+  feature-importance-driven pruning of `FEATURE_COLS`; reach validation return >
+  NASDAQ (depends on Phase 4 allocation/leverage/tax).
 - **Phase 4** — `portfolio/` package: `state.py` (positions incl. 2x/3x + cash),
   `rules.py` (90/10 base, 33% per-name trim 3%, <10%/day sell, 20% drawdown→cash,
   crisis 100% with 2-month revert, dividends on underlying), `tax.py` (25% flat +

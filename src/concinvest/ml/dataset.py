@@ -5,7 +5,10 @@ we sample stochastic trade datapoints: half buys, half sells, each a market snap
 with an action encoding (``is_sell``, ``leverage``). The label is whether the action
 was profitable over a forward horizon — strictly forward-looking to avoid leakage.
 
-Phase 1 generates a modest dataset; the full 100k generator (Story.md) is Phase 3.
+The Story.md target is 100k datapoints (50k buys / 50k sells). Generated rows are
+returned **chronologically ordered** (indexed by snapshot date) so that
+``TimeSeriesSplit`` CV and the first-4-years-train / last-1-year-validate split
+(``train_validate_split``) are honest.
 """
 
 from __future__ import annotations
@@ -79,12 +82,15 @@ def generate_dataset(
     """Sample ``n`` synthetic datapoints (half buys, half sells).
 
     ``prices`` maps ticker -> close Series for forward-return labelling. Returns
-    ``(X, y)`` where X has ``FEATURE_COLS`` and y is the binary "profitable action".
+    ``(X, y)`` where X has ``FEATURE_COLS`` and y is the binary "profitable action";
+    both are indexed by snapshot date and sorted chronologically (so downstream
+    ``TimeSeriesSplit`` / ``train_validate_split`` are time-honest).
     """
     rng = np.random.default_rng(seed)
     tickers = [t for t in prices if t in panel.index.get_level_values("ticker").unique()]
     rows: list[dict] = []
     labels: list[int] = []
+    dates: list[pd.Timestamp] = []
 
     n_sell_target = n // 2
     attempts = 0
@@ -122,8 +128,28 @@ def generate_dataset(
         record["leverage"] = leverage
         rows.append(record)
         labels.append(label)
+        dates.append(pd.Timestamp(date))
         n_sells += is_sell
 
     X = pd.DataFrame(rows, columns=FEATURE_COLS).fillna(0.0)
     y = pd.Series(labels, name="profitable")
+    # Order chronologically by snapshot date for honest time-series CV/splits.
+    idx = pd.DatetimeIndex(dates, name="date")
+    order = np.argsort(idx.values, kind="stable")
+    X = X.iloc[order].set_axis(idx[order])
+    y = y.iloc[order].set_axis(idx[order])
     return X, y
+
+
+def train_validate_split(
+    X: pd.DataFrame, y: pd.Series, validation_years: int | None = None
+) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+    """Split a date-indexed ``(X, y)`` into train / validate by calendar time.
+
+    Story.md: train on all but the last ``validation_years`` (default
+    ``config.VALIDATION_YEARS``), validate on the held-out final window.
+    """
+    validation_years = validation_years or config.VALIDATION_YEARS
+    cutoff = X.index.max() - pd.DateOffset(years=validation_years)
+    train = X.index <= cutoff
+    return X[train], y[train], X[~train], y[~train]

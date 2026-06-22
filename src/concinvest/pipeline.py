@@ -120,18 +120,21 @@ def run_phase1(
     n_dataset: int = 4_000,
     horizon: int = 20,
     with_sentiment: bool = True,
+    tune: bool = True,
     db_path=None,
 ) -> Phase1Result:
     """Run the full slice over the full ticker universe; return artifacts for UI/CLI."""
     universe = tickers.ALL_TICKERS
     market, cross, raw = fetch_and_store(universe, start=start, end=end, db_path=db_path)
 
-    # Feature panel + synthetic dataset + model.
+    # Feature panel + synthetic dataset + model. Train only on the pre-validation
+    # split so the validation-window backtest is honest out-of-sample.
     panel = dataset.build_feature_panel(market, cross)
     prices = {t: pd.Series(df["close"].values, index=pd.to_datetime(df.index))
               for t, df in market.items()}
     X, y = dataset.generate_dataset(panel, prices, n=n_dataset, horizon=horizon)
-    trained = model.train(X, y)
+    X_tr, y_tr, _, _ = dataset.train_validate_split(X, y)
+    trained = (model.tune_and_train(X_tr, y_tr) if tune else model.train(X_tr, y_tr))
 
     # Live analyst/sentiment, then forecast from the latest snapshots.
     sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)

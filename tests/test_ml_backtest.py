@@ -27,6 +27,33 @@ def test_generate_dataset_shapes_and_balance(synth_market, synth_raw):
     assert 0.3 < X["is_sell"].mean() < 0.7
 
 
+def test_generate_dataset_is_chronologically_ordered(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=500, horizon=20, seed=7)
+    assert isinstance(X.index, pd.DatetimeIndex)
+    assert X.index.is_monotonic_increasing  # honest input for TimeSeriesSplit
+    assert (X.index == y.index).all()
+
+
+def test_train_validate_split_by_date(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=8)
+    Xtr, ytr, Xva, yva = dataset.train_validate_split(X, y, validation_years=1)
+    assert len(Xtr) + len(Xva) == len(X)
+    assert len(Xtr) == len(ytr) and len(Xva) == len(yva)
+    # Every train date precedes every validation date (no temporal overlap).
+    if len(Xva):
+        assert Xtr.index.max() < Xva.index.min()
+
+
+def test_tune_returns_grid_params(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=900, horizon=20, seed=9)
+    params, scores = model.tune(X, y, n_splits=3)
+    assert params in [dict(p) for p in model.PARAM_GRID]
+    assert all(0.0 <= s <= 1.0 for s in scores)
+
+
 def test_train_and_forecast_five_fields(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=800, horizon=20, seed=2)

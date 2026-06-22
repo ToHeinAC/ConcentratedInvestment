@@ -28,7 +28,9 @@ def synth_raw() -> dict[str, pd.DataFrame]:
     }
     out: dict[str, pd.DataFrame] = {}
     for t, seed in tickers.items():
-        close = _synth_close(400, seed)
+        # ~2.5y of business days: enough valid dates after the 200-day SMA warmup
+        # for a realistic 1-year train/validate split.
+        close = _synth_close(650, seed)
         df = pd.DataFrame(
             {
                 "open": close.values,

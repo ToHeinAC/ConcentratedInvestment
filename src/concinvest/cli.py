@@ -24,8 +24,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_run = sub.add_parser("run", help="Run the full Phase 1 slice and print results")
     p_run.add_argument("--start", default=str(config.START_DATE))
-    p_run.add_argument("--n", type=int, default=4000, help="synthetic datapoints")
+    p_run.add_argument("--n", type=int, default=4000,
+                       help="synthetic datapoints (Story.md target: 100000)")
     p_run.add_argument("--sentiment", action="store_true", help="fetch live sentiment")
+    p_run.add_argument("--no-tune", dest="tune", action="store_false",
+                       help="skip TimeSeriesSplit hyperparameter tuning")
 
     args = parser.parse_args(argv)
 
@@ -51,9 +54,10 @@ def main(argv: list[str] | None = None) -> int:
         from .ml.forecast import forecasts_to_frame
         from .pipeline import run_phase1
 
-        res = run_phase1(start=args.start, n_dataset=args.n, with_sentiment=args.sentiment)
+        res = run_phase1(start=args.start, n_dataset=args.n,
+                         with_sentiment=args.sentiment, tune=args.tune)
         bt = res.backtest
-        print(f"model CV ROC-AUC (mean): {res.model.mean_cv:.3f}")
+        print(f"model CV ROC-AUC (mean): {res.model.mean_cv:.3f} | params: {res.model.params}")
         print(f"portfolio return: {bt.portfolio_return:+.1%} | "
               f"NASDAQ: {bt.benchmark_return:+.1%} | "
               f"{'BEATS' if bt.beats_benchmark else 'below'} benchmark")

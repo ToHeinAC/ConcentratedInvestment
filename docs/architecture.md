@@ -82,13 +82,18 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`dataset.py`** — `FEATURE_COLS` is the model contract (technical + cross-asset +
   sentiment placeholders + action encoding). `build_feature_panel()` joins per-stock
   technicals with date-aligned cross-asset features into a `(date, ticker)` MultiIndex
-  panel. `generate_dataset()` samples `n` datapoints (half buys / half sells); each is
-  a market snapshot plus `is_sell`/`leverage`; the label is "profitable action" from a
-  forward-return horizon (buy good if price rose, sell good if it fell). Features are
-  point-in-time, labels strictly forward — no leakage.
+  panel. `generate_dataset()` samples `n` datapoints (half buys / half sells; 100k is
+  the Story.md target); each is a market snapshot plus `is_sell`/`leverage`; the label
+  is "profitable action" from a forward-return horizon (buy good if price rose, sell
+  good if it fell). Rows are **returned sorted by snapshot date** (DatetimeIndex) so
+  `TimeSeriesSplit` is honest; features are point-in-time, labels strictly forward — no
+  leakage. `train_validate_split()` carves the last `VALIDATION_YEARS` off by calendar
+  date (Story.md 4y-train / 1y-validate).
 - **`model.py`** — `train()` fits a `RandomForestClassifier` with `TimeSeriesSplit`
   ROC-AUC CV and feature importances, returning a `TrainedModel` whose
-  `predict_confidence()` gives `P(profitable)`.
+  `predict_confidence()` gives `P(profitable)`. `tune()` selects the best `PARAM_GRID`
+  entry by mean TSCV AUC; `tune_and_train()` tunes then fits. The pipeline trains on
+  the pre-validation split only, so the validation-window backtest is out-of-sample.
 - **`forecast.py`** — `forecast()` enumerates buy/sell × leverage candidates per
   stock, scores them, and keeps the best above `threshold` (else hold). Emits the
   five Story.md fields via the `Forecast` dataclass; `forecasts_to_frame()` tabulates.
