@@ -17,6 +17,8 @@ import pandas as pd
 from .. import config
 from ..ml.dataset import FEATURE_COLS
 from ..ml.model import TrainedModel
+from ..portfolio import rules
+from ..portfolio import state as pstate
 
 
 @dataclass
@@ -76,6 +78,50 @@ def run_backtest(
     bench = bench.reindex(dates).ffill()
     benchmark = config.INITIAL_CAPITAL_EUR * (bench / bench.iloc[0])
 
+    curve = pd.DataFrame({"portfolio": portfolio, "benchmark": benchmark}).dropna()
+    p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
+    b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
+    return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret)
+
+
+def _benchmark_curve(benchmark_close: pd.Series, dates: pd.DatetimeIndex) -> pd.Series:
+    """NASDAQ buy-and-hold rebased to the initial capital over ``dates``."""
+    bench = benchmark_close.copy()
+    bench.index = pd.to_datetime(bench.index)
+    bench = bench.reindex(dates).ffill()
+    return config.INITIAL_CAPITAL_EUR * (bench / bench.iloc[0])
+
+
+def run_rules_backtest(
+    market: dict[str, pd.DataFrame],
+    benchmark_close: pd.Series,
+    start: str | None = None,
+    capital: float = config.INITIAL_CAPITAL_EUR,
+) -> BacktestResult:
+    """Replay the Story.md base-case leveraged book under the daily risk guardrails.
+
+    Starts from the 90/10 base case (per-name 12%/3%/3% stock/2x/3x), marks every
+    lot to market each day, then applies the sell-side guardrails (drawdown de-risk,
+    per-name trim, 10%/day cap) with German tax on realized gains. No re-entry yet —
+    forecast-driven buys/sells are the next Phase 4 increment.
+    """
+    closes = pd.DataFrame({t: df["close"] for t, df in market.items()})
+    closes.index = pd.to_datetime(closes.index)
+    closes = closes.sort_index()
+    if start:
+        closes = closes.loc[start:]
+    rets = closes.pct_change().fillna(0.0)
+    dates = pd.DatetimeIndex(rets.index)
+
+    state = pstate.build_base_case(capital, stocks=list(market))
+    values: list[float] = []
+    for _, row in rets.iterrows():
+        state.mark(row.to_dict())
+        rules.apply_guardrails(state)
+        values.append(state.total_value())
+
+    portfolio = pd.Series(values, index=dates)
+    benchmark = _benchmark_curve(benchmark_close, dates)
     curve = pd.DataFrame({"portfolio": portfolio, "benchmark": benchmark}).dropna()
     p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
     b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)

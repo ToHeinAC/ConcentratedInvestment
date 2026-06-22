@@ -98,11 +98,23 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   stock, scores them, and keeps the best above `threshold` (else hold). Emits the
   five Story.md fields via the `Forecast` dataclass; `forecasts_to_frame()` tabulates.
 
+### `portfolio/` (Phase 4)
+- **`state.py`** — `PortfolioState` (cash + leveraged `Lot`s with cost basis,
+  `loss_carry`, `high_water`). `mark()` applies daily constant-leverage returns;
+  `buy()`/`sell_name()` open lots and realize tax-adjusted proceeds;
+  `build_base_case()` constructs the Story.md 90/10 book (per-name 12%/3%/3%).
+- **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a realized-loss carry
+  that offsets future gains before tax.
+- **`rules.py`** — deterministic sell-side guardrails returning `Trade`s: per-name
+  trim (33%→3%), drawdown de-risk (>20%→cash), 10%/day sell cap; `apply_guardrails()`
+  runs them per day. Crisis/dividends/forecast-driven trading are the next increment.
+
 ### `backtest/`
 - **`engine.py`** — `run_backtest()` holds an equal-weight 5-stock basket but scales
   daily equity exposure by the model's mean buy-confidence (rest in cash), lagged one
-  day to stay point-in-time. Returns a `BacktestResult` (curve + portfolio/benchmark
-  returns + `beats_benchmark`). Full allocation/risk/leverage/tax logic is Phase 4.
+  day to stay point-in-time. `run_rules_backtest()` replays the base-case leveraged
+  book under the `portfolio` guardrails + tax. Both return a `BacktestResult` (curve +
+  portfolio/benchmark returns + `beats_benchmark`).
 
 ### `app/`
 - **`streamlit_app.py`** — UI: forecast table, portfolio-vs-NASDAQ curve, live

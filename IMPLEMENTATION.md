@@ -36,7 +36,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 | **1** | Thin end-to-end slice (all layers, sentiment-aware) | ✅ done |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
 | **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | 🔄 in progress |
-| **4** | Full rules engine (allocation/risk/leverage/drawdown/trim) + German tax, in backtest | ⏳ planned |
+| **4** | Full rules engine (allocation/risk/leverage/drawdown/trim) + German tax, in backtest | 🔄 in progress |
 | **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | ⏳ planned |
 
 ## 4. Architecture (implemented)
@@ -47,7 +47,8 @@ Package `src/concinvest/`. Full detail in [`docs/architecture.md`](docs/architec
 data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite)
 features/  technical.py · cross_asset.py · sentiment.py (VADER/FinBERT) · analyst.py · options.py
 ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields)
-backtest/  engine.py (model-timed portfolio vs NASDAQ)
+portfolio/ state.py (leveraged lots+cash) · tax.py (Abgeltungsteuer) · rules.py (guardrails)
+backtest/  engine.py (model-timed + rules-based portfolio vs NASDAQ)
 app/       streamlit_app.py · exit_button.py
 config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 ```
@@ -107,11 +108,28 @@ history (no historical news feed) and filled live at forecast time.
   "beat NASDAQ" target, which is **gated on the Phase 4 allocation/leverage/tax
   engine** (the current confidence-scaled basket is not expected to clear NASDAQ).
 
+## 5d. Phase 4 design notes (in progress)
+
+- **`portfolio/` package** — `state.PortfolioState` holds leveraged lots (tier 1/2/3,
+  each with a cost basis) + cash; `mark()` applies daily constant-leverage returns;
+  `sell_name()` realizes gains proportionally and pays tax. `build_base_case()` is the
+  90/10 book (per-name 12%/3%/3%).
+- **`tax.tax_on_sale`** — 25% flat Abgeltungsteuer; realized losses accumulate in a
+  carry pool that offsets future gains before tax.
+- **`rules`** — deterministic sell-side guardrails: 33% per-name → trim 3%; 20%
+  drawdown → de-risk toward cash; every sell capped at 10%/day. `apply_guardrails`
+  runs them per day (de-risk, then trim).
+- **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
+  guardrails vs NASDAQ (separate from the model-timed Phase 1 backtest).
+- **Open** — crisis 100%/2-month-revert path, dividends on underlying, forecast-driven
+  buys/sells and cash re-entry, and wiring the rules backtest into the live
+  pipeline/UI. "Optimal weighting" stays delegated to the ML confidence.
+
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 29 tests, offline (synthetic fixtures)
+uv run pytest                                   # 39 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
@@ -121,7 +139,8 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   sentiment scaling, SQLite upsert/read roundtrip, additive schema migration, pure
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
-  train + 5-field forecast, backtest curve.
+  train + 5-field forecast, backtest curve, portfolio state/tax/guardrails +
+  rules-based backtest.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -133,10 +152,11 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   date-based train/validate split, TSCV hyperparameter tuning. Remaining:
   feature-importance-driven pruning of `FEATURE_COLS`; reach validation return >
   NASDAQ (depends on Phase 4 allocation/leverage/tax).
-- **Phase 4** — `portfolio/` package: `state.py` (positions incl. 2x/3x + cash),
-  `rules.py` (90/10 base, 33% per-name trim 3%, <10%/day sell, 20% drawdown→cash,
-  crisis 100% with 2-month revert, dividends on underlying), `tax.py` (25% flat +
-  realized-loss offset); integrate into `backtest.engine`.
+- **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
+  `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
+  sell, 20% drawdown→cash), `backtest.run_rules_backtest`. Remaining: crisis 100% /
+  2-month revert, dividends on underlying, forecast-driven trading + cash re-entry,
+  and wiring the rules backtest into the live pipeline/UI.
 - **Phase 5** — correlation/regime UI, `pipeline.fetch_and_store` daily cron, Docker.
 
 ## 8. Conventions

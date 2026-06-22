@@ -70,6 +70,16 @@ def test_train_and_forecast_five_fields(synth_market, synth_raw):
     assert f.amount_eur > 0
 
 
+def test_rules_backtest_produces_curve(synth_market, synth_raw):
+    bench = synth_raw["^IXIC"]["close"]
+    bench.index = pd.to_datetime(list(bench.index))
+    res = engine.run_rules_backtest(synth_market, bench)
+    assert {"portfolio", "benchmark"}.issubset(res.curve.columns)
+    assert len(res.curve) > 50
+    assert (res.curve["portfolio"] > 0).all()  # book never goes negative
+    assert isinstance(res.beats_benchmark, bool)
+
+
 def test_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=3)
