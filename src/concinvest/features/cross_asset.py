@@ -37,6 +37,17 @@ def build_cross_asset_frame(closes: dict[str, pd.Series]) -> pd.DataFrame:
     tnx = _close(closes, "^TNX")
     if tnx is not None:
         out["yield_10y"] = tnx
+        fvx = _close(closes, "^FVX")
+        if fvx is not None:
+            out["yield_spread_10y_5y"] = tnx - fvx
+
+    vvix = _close(closes, "^VVIX")
+    if vvix is not None:
+        out["vvix_level"] = vvix
+
+    gsci = _close(closes, "^SPGSCI")
+    if gsci is not None:
+        out["gsci_sma20_ratio"] = gsci / sma(gsci, 20)
 
     dxy = _close(closes, "DX-Y.NYB")
     if dxy is not None:

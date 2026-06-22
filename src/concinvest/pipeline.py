@@ -27,6 +27,7 @@ class Phase1Result:
     forecasts: list[Forecast]
     backtest: BacktestResult
     correlation: pd.DataFrame
+    sentiment: pd.DataFrame  # live analyst/sentiment rows (empty if disabled)
 
 
 def fetch_and_store(
@@ -79,16 +80,27 @@ def fetch_and_store(
     return market, cross, raw
 
 
+def _fetch_sentiment(stocks: list[str], db_path=None) -> pd.DataFrame:
+    """Fetch live analyst/sentiment rows for ``stocks`` and persist them."""
+    rows = [analyst.build_sentiment_row(t) for t in stocks]
+    frame = pd.concat(rows, ignore_index=True)
+    conn = store.connect(db_path)
+    store.upsert(conn, "sentiment_analyst", frame)
+    conn.close()
+    return frame
+
+
 def _live_snapshots(
-    panel: pd.DataFrame, with_sentiment: bool
+    panel: pd.DataFrame, sentiment_df: pd.DataFrame
 ) -> dict[str, pd.Series]:
-    """Latest feature row per stock, optionally enriched with live sentiment."""
+    """Latest feature row per stock, enriched with live sentiment when available."""
+    by_ticker = sentiment_df.set_index("ticker") if not sentiment_df.empty else None
     snapshots: dict[str, pd.Series] = {}
     for ticker in panel.index.get_level_values("ticker").unique():
         sub = panel.xs(ticker, level="ticker")
         snap = sub.iloc[-1].copy()
-        if with_sentiment:
-            row = analyst.build_sentiment_row(ticker).iloc[0]
+        if by_ticker is not None and ticker in by_ticker.index:
+            row = by_ticker.loc[ticker]
             snap["news_sentiment_score"] = row["news_sentiment_score"] or 0.0
             snap["put_call_ratio"] = row["put_call_ratio"] or 0.0
         snapshots[ticker] = snap
@@ -110,8 +122,8 @@ def run_phase1(
     with_sentiment: bool = True,
     db_path=None,
 ) -> Phase1Result:
-    """Run the full Phase 1 slice and return artifacts for UI/CLI."""
-    universe = tickers.CORE_TICKERS
+    """Run the full slice over the full ticker universe; return artifacts for UI/CLI."""
+    universe = tickers.ALL_TICKERS
     market, cross, raw = fetch_and_store(universe, start=start, end=end, db_path=db_path)
 
     # Feature panel + synthetic dataset + model.
@@ -121,8 +133,10 @@ def run_phase1(
     X, y = dataset.generate_dataset(panel, prices, n=n_dataset, horizon=horizon)
     trained = model.train(X, y)
 
-    # Forecast from the latest snapshots.
-    snaps = _live_snapshots(panel, with_sentiment=with_sentiment)
+    # Live analyst/sentiment, then forecast from the latest snapshots.
+    sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
+                    if with_sentiment else pd.DataFrame())
+    snaps = _live_snapshots(panel, sentiment_df)
     forecasts = forecast.forecast(trained, snaps)
 
     # Backtest over the validation window (last VALIDATION_YEARS).
@@ -137,4 +151,5 @@ def run_phase1(
     return Phase1Result(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,
+        sentiment=sentiment_df,
     )

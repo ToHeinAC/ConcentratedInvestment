@@ -88,3 +88,13 @@ ALL_TICKERS: list[str] = _dedup()
 
 # Name lookup across all groups.
 NAMES: dict[str, str] = {k: v for group in _GROUPS for k, v in group.items()}
+
+# Search terms for German-language news scraping (finanzen.net /
+# finanznachrichten.de) per portfolio stock. Used by the Phase 2 sentiment layer.
+GERMAN_QUERY: dict[str, str] = {
+    "SIE.DE": "Siemens",
+    "MUV2.DE": "Munich Re",
+    "FCX": "Freeport-McMoRan",
+    "TSLA": "Tesla",
+    "8001.T": "Itochu",
+}

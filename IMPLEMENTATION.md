@@ -24,8 +24,9 @@ on the held-out final year (first 4 yrs train / last 1 yr validate).
 ## 2. Tech stack
 
 Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) ·
-`streamlit` (port 8505) · `pytest` · SQLite · Docker. Sentiment: `nltk` VADER now;
-`transformers` FinBERT + `beautifulsoup4` scraping in Phase 2.
+`streamlit` (port 8505) · `pytest` · SQLite · Docker. Sentiment: `nltk` VADER
+(default) or `transformers` FinBERT (opt-in via the `sentiment` extra), with
+`requests`/`beautifulsoup4` German-news scraping. Backend set by `config.SENTIMENT_MODEL`.
 
 ## 3. Status
 
@@ -33,7 +34,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 |-------|-------|-------|
 | **0** | Scaffold: package, config, tickers, CLI, tests, Docker, exit button | ✅ done |
 | **1** | Thin end-to-end slice (all layers, sentiment-aware) | ✅ done |
-| **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ⏳ planned |
+| **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
 | **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | ⏳ planned |
 | **4** | Full rules engine (allocation/risk/leverage/drawdown/trim) + German tax, in backtest | ⏳ planned |
 | **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | ⏳ planned |
@@ -44,7 +45,7 @@ Package `src/concinvest/`. Full detail in [`docs/architecture.md`](docs/architec
 
 ```
 data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite)
-features/  technical.py · cross_asset.py · sentiment.py (VADER) · analyst.py · options.py
+features/  technical.py · cross_asset.py · sentiment.py (VADER/FinBERT) · analyst.py · options.py
 ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields)
 backtest/  engine.py (model-timed portfolio vs NASDAQ)
 app/       streamlit_app.py · exit_button.py
@@ -75,19 +76,35 @@ history (no historical news feed) and filled live at forecast time.
 - **Leverage** — 2x/3x as daily-rebalanced constant-leverage multipliers (documented
   assumption).
 
+## 5b. Phase 2 design notes
+
+- **Full universe** — `run_phase1` / `concinvest update` now fetch `ALL_TICKERS` (27).
+  New cross-asset series (`^FVX`, `^VVIX`, `^SPGSCI`) feed `yield_spread_10y_5y`,
+  `vvix_level`, `gsci_sma20_ratio`; the first two also join `FEATURE_COLS`.
+- **Sentiment backends** — `score_headlines(model=…)` selects VADER (default) or
+  FinBERT (`P(pos) − P(neg)` scaled to ±3), both lazy-loaded. German headlines from
+  `finanznachrichten.de` (per-stock `tickers.GERMAN_QUERY`) are appended to the
+  yfinance feed before scoring.
+- **New live signals** — `sentiment_analyst` gains `eps_revision_up_7d/down_7d`,
+  `analyst_target_mean`, `iv_skew` (OTM-put − ATM-call IV). These have no usable
+  history, so they are **stored/displayed only**, not model features.
+- **Additive migrations** — `store._migrate` `ALTER TABLE`s the new columns onto
+  pre-Phase-2 databases idempotently; no rebuild required.
+
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 20 tests, offline (synthetic fixtures)
+uv run pytest                                   # 26 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
 
 - **Unit tests** (`tests/`, offline via `conftest.py` synthetic market): technical
-  indicators vs known values, cross-asset ratios, sentiment scaling, SQLite
-  upsert/read roundtrip, dataset shape/balance/no-leakage, model train + 5-field
-  forecast, backtest curve.
+  indicators vs known values, cross-asset ratios (incl. VVIX/GSCI/10y-5y spread),
+  sentiment scaling, SQLite upsert/read roundtrip, additive schema migration, pure
+  fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
+  shape/balance/no-leakage, model train + 5-field forecast, backtest curve.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -95,9 +112,6 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 ## 7. Remaining phases — detail
 
-- **Phase 2** — extend `data.fetch`/`features` to the full 27-ticker universe;
-  FinBERT (`features.sentiment`) + `finanzen.net` / `finanznachrichten.de` scraping;
-  options IV skew (`features.options`); analyst `eps_revisions`/`eps_trend`.
 - **Phase 3** — `ml.dataset` 100k generator; tune RandomForest via TimeSeriesSplit;
   feature-importance-driven selection; target: validation return > NASDAQ.
 - **Phase 4** — `portfolio/` package: `state.py` (positions incl. 2x/3x + cash),

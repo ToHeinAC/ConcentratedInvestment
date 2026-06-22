@@ -38,6 +38,11 @@ CAPITAL_GAINS_TAX_RATE: float = 0.25
 # Leverage tiers available (long only).
 LEVERAGE_TIERS: tuple[int, ...] = (1, 2, 3)
 
+# --- Sentiment -----------------------------------------------------------
+# News-sentiment backend: "vader" (light, default) or "finbert" (transformers,
+# opt-in via the ``sentiment`` extra). FinBERT is loaded lazily on first use.
+SENTIMENT_MODEL: str = "vader"
+
 # --- Benchmark -----------------------------------------------------------
 BENCHMARK_TICKER: str = "^IXIC"  # NASDAQ Composite
 

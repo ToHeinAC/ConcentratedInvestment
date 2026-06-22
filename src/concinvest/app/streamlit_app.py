@@ -33,13 +33,14 @@ def _load(n_dataset: int, with_sentiment: bool):
         "importance": res.model.feature_importance,
         "mean_cv": res.model.mean_cv,
         "correlation": res.correlation,
+        "sentiment": res.sentiment,
     }
 
 
 def main() -> None:
     st.set_page_config(page_title="ConcentratedInvestment", page_icon="📈", layout="wide")
     st.title("ConcentratedInvestment")
-    st.caption(f"v{__version__} · Phase 1 — live end-to-end slice")
+    st.caption(f"v{__version__} · Phase 2 — full universe, richer sentiment & analyst signals")
 
     with st.sidebar:
         st.header("Controls")
@@ -81,6 +82,13 @@ def main() -> None:
     )
     st.line_chart(data["curve"])
     st.caption(f"Model CV ROC-AUC (mean): {data['mean_cv']:.3f}")
+
+    # --- Live analyst / sentiment --------------------------------------
+    sent = data["sentiment"]
+    if sent is not None and not sent.empty:
+        st.subheader("Live analyst & sentiment signals")
+        st.dataframe(sent, use_container_width=True, hide_index=True)
+        st.caption("Stored in `sentiment_analyst`; not yet model features (no history).")
 
     # --- Feature importance --------------------------------------------
     st.subheader("Feature importance")

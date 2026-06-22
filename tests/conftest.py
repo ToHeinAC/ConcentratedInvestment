@@ -24,6 +24,7 @@ def synth_raw() -> dict[str, pd.DataFrame]:
         "SIE.DE": 1, "TSLA": 2,
         "GC=F": 3, "CL=F": 4, "HG=F": 5, "^VIX": 6,
         "DX-Y.NYB": 7, "^TNX": 8, "^GSPC": 9, "^IXIC": 10,
+        "^FVX": 11, "^VVIX": 12, "^SPGSCI": 13,
     }
     out: dict[str, pd.DataFrame] = {}
     for t, seed in tickers.items():

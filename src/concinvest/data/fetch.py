@@ -12,9 +12,14 @@ import datetime as _dt
 import time
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 from .. import config
+
+# Browser-like UA so the German news sites return the normal markup.
+_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) concinvest/0.0"
+_SCRAPE_TIMEOUT = 6.0
 
 # Polite delay between per-ticker metadata requests (seconds).
 _META_DELAY = 0.5
@@ -124,3 +129,91 @@ def fetch_put_call_ratio(ticker: str) -> float | None:
         return put_oi / call_oi
     except Exception:  # noqa: BLE001
         return None
+
+
+def fetch_eps_revisions(ticker: str) -> tuple[float | None, float | None]:
+    """(up, down) analyst EPS revisions over the last 7 days for the current quarter."""
+    try:
+        rev = yf.Ticker(ticker).eps_revisions
+        time.sleep(_META_DELAY)
+        if rev is None or rev.empty:
+            return None, None
+        row = rev.loc["0q"] if "0q" in rev.index else rev.iloc[0]
+        up = row.get("upLast7days")
+        down = row.get("downLast7days")
+        return (
+            float(up) if up is not None and not pd.isna(up) else None,
+            float(down) if down is not None and not pd.isna(down) else None,
+        )
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
+def fetch_analyst_target_mean(ticker: str) -> float | None:
+    """Mean analyst price target, or None."""
+    try:
+        info = yf.Ticker(ticker).info
+        val = info.get("targetMeanPrice")
+        time.sleep(_META_DELAY)
+        return float(val) if val is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def fetch_iv_skew(ticker: str) -> float | None:
+    """Implied-vol skew = OTM-put IV minus ATM-call IV (nearest expiry)."""
+    try:
+        tk = yf.Ticker(ticker)
+        expiries = tk.options
+        if not expiries:
+            return None
+        spot = float(tk.fast_info["last_price"])
+        chain = tk.option_chain(expiries[0])
+        time.sleep(_META_DELAY)
+        atm_call_iv = _iv_at(chain.calls, spot)
+        otm_put_iv = _iv_at(chain.puts, 0.9 * spot)
+        if atm_call_iv is None or otm_put_iv is None:
+            return None
+        return otm_put_iv - atm_call_iv
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _iv_at(opts: pd.DataFrame, strike: float) -> float | None:
+    """Implied vol of the contract whose strike is nearest ``strike``."""
+    if opts is None or opts.empty:
+        return None
+    row = opts.iloc[(opts["strike"] - strike).abs().argmin()]
+    iv = row.get("impliedVolatility")
+    return float(iv) if iv is not None and not pd.isna(iv) else None
+
+
+def fetch_german_headlines(query: str, max_items: int = 10) -> list[str]:
+    """Scrape recent German-language headlines for ``query`` (best effort)."""
+    url = "https://www.finanznachrichten.de/suche/uebersicht.htm"
+    try:
+        resp = requests.get(
+            url, params={"suche": query},
+            headers={"User-Agent": _UA}, timeout=_SCRAPE_TIMEOUT,
+        )
+        time.sleep(_META_DELAY)
+        if resp.status_code != 200:
+            return []
+        return _parse_finanznachrichten(resp.text, max_items)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _parse_finanznachrichten(html: str, max_items: int = 10) -> list[str]:
+    """Extract article headlines from a finanznachrichten.de search page."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    seen: dict[str, None] = {}
+    for a in soup.select("a.news-headline, a[href*='/nachrichten-']"):
+        title = a.get_text(strip=True)
+        if len(title) > 15:
+            seen.setdefault(title, None)
+        if len(seen) >= max_items:
+            break
+    return list(seen)

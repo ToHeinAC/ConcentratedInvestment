@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "update":
         from .pipeline import fetch_and_store
 
-        market, cross, raw = fetch_and_store(tickers.CORE_TICKERS, start=args.start)
+        market, cross, raw = fetch_and_store(tickers.ALL_TICKERS, start=args.start)
         print(f"stored {len(raw)} tickers; {len(market)} stocks with features")
         print(f"cross-asset rows: {len(cross)}; db: {config.DB_PATH}")
         return 0

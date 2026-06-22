@@ -29,9 +29,11 @@ TECH_FEATURES = [
 CROSS_FEATURES = [
     "vix_level",
     "vix_sma20_ratio",
+    "vvix_level",
     "gold_oil_ratio",
     "copper_gold_ratio",
     "yield_10y",
+    "yield_spread_10y_5y",
 ]
 SENTIMENT_FEATURES = ["news_sentiment_score", "put_call_ratio"]
 ACTION_FEATURES = ["is_sell", "leverage"]

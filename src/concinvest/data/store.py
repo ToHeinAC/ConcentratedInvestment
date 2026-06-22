@@ -39,16 +39,43 @@ CREATE TABLE IF NOT EXISTS sentiment_analyst (
     recommendation_mean REAL,
     news_sentiment_score REAL,
     put_call_ratio REAL,
+    eps_revision_up_7d REAL, eps_revision_down_7d REAL,
+    analyst_target_mean REAL, iv_skew REAL,
     PRIMARY KEY (date, ticker)
 );
 CREATE TABLE IF NOT EXISTS cross_asset (
     date TEXT NOT NULL,
     gold_oil_ratio REAL, copper_gold_ratio REAL,
     vix_level REAL, vix_sma20_ratio REAL,
-    yield_10y REAL, dollar_index REAL, btc_sma20_ratio REAL,
+    yield_10y REAL, yield_spread_10y_5y REAL,
+    vvix_level REAL, gsci_sma20_ratio REAL,
+    dollar_index REAL, btc_sma20_ratio REAL,
     PRIMARY KEY (date)
 );
 """
+
+# Columns added after the initial schema; applied idempotently to pre-existing DBs
+# so additive Phase 2 features don't require a rebuild.
+_MIGRATIONS: dict[str, dict[str, str]] = {
+    "sentiment_analyst": {
+        "eps_revision_up_7d": "REAL", "eps_revision_down_7d": "REAL",
+        "analyst_target_mean": "REAL", "iv_skew": "REAL",
+    },
+    "cross_asset": {
+        "yield_spread_10y_5y": "REAL", "vvix_level": "REAL",
+        "gsci_sma20_ratio": "REAL",
+    },
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add any missing columns from ``_MIGRATIONS`` (additive, idempotent)."""
+    for table, cols in _MIGRATIONS.items():
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, sqltype in cols.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sqltype}")
+    conn.commit()
 
 
 def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
@@ -56,6 +83,7 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     config.ensure_dirs()
     conn = sqlite3.connect(str(db_path or config.DB_PATH))
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
 
 

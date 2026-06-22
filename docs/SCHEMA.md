@@ -36,15 +36,18 @@ Per-stock OHLCV plus computed technical features. Written for the 5 portfolio st
 **PK:** `(date, ticker)`.
 
 ## `sentiment_analyst` (Table 2)
-Analyst + sentiment signals per stock. Phase 1 stores the numeric essentials;
-revision-momentum and richer fields arrive in Phase 2.
+Analyst + sentiment signals per stock. Fetched live and stored/displayed only — no
+usable history, so these are **not** model features.
 
 | Column | Source |
 |--------|--------|
 | date, ticker | PK |
 | recommendation_mean | `info['recommendationMean']` |
-| news_sentiment_score | VADER on `get_news()`, scaled to [-3, 3] |
+| news_sentiment_score | VADER/FinBERT on `get_news()` + German headlines, scaled to [-3, 3] |
 | put_call_ratio | derived from `option_chain()` |
+| eps_revision_up_7d, eps_revision_down_7d | `eps_revisions` (`0q` row, last 7 days) |
+| analyst_target_mean | `info['targetMeanPrice']` |
+| iv_skew | OTM-put IV − ATM-call IV, nearest expiry (`option_chain()`) |
 
 **PK:** `(date, ticker)`.
 
@@ -59,6 +62,9 @@ One row per date; market-wide derived ratios.
 | vix_level | `^VIX` close |
 | vix_sma20_ratio | `^VIX` / SMA20(`^VIX`) |
 | yield_10y | `^TNX` |
+| yield_spread_10y_5y | `^TNX` − `^FVX` |
+| vvix_level | `^VVIX` close |
+| gsci_sma20_ratio | `^SPGSCI` / SMA20(`^SPGSCI`) |
 | dollar_index | `DX-Y.NYB` |
 | btc_sma20_ratio | `BTC-USD` / SMA20(`BTC-USD`) |
 
@@ -72,14 +78,13 @@ column contract is `ml.dataset.FEATURE_COLS`:
 
 - **Technical:** `rsi_14, macd, price_sma50_ratio, price_sma200_ratio,
   sma50_sma200_ratio, volume_sma20_ratio`
-- **Cross-asset:** `vix_level, vix_sma20_ratio, gold_oil_ratio, copper_gold_ratio,
-  yield_10y`
+- **Cross-asset:** `vix_level, vix_sma20_ratio, vvix_level, gold_oil_ratio,
+  copper_gold_ratio, yield_10y, yield_spread_10y_5y`
 - **Sentiment:** `news_sentiment_score, put_call_ratio` (neutral defaults over
   history; live values at forecast time)
 - **Action encoding:** `is_sell, leverage`
 
-## Planned (Phase 2+)
+## Planned (Phase 3+)
 
-Additional `sentiment_analyst` columns (eps revisions, analyst targets, FinBERG/
-German-source scores), full-universe rows in `cross_asset` (extra bonds, VVIX,
-GSCI), and a positions/trade-ledger table for the Phase 4 rules + tax engine.
+A positions/trade-ledger table for the Phase 4 rules + tax engine. Additive columns
+are applied to existing databases by `store._migrate` (no rebuild).

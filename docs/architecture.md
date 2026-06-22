@@ -4,7 +4,7 @@ Deep reference for the `concinvest` package. For the compact build plan and phas
 status see [../IMPLEMENTATION.md](../IMPLEMENTATION.md); for the database tables see
 [SCHEMA.md](SCHEMA.md).
 
-## Data flow (Phase 1)
+## Data flow
 
 ```
                     yfinance (network)
@@ -48,11 +48,15 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   (27, de-duplicated) is the full universe; `NAMES` is a flat lookup.
 - **`fetch.py`** — all network access. `download_ohlcv()` batches via
   `yf.download(group_by="ticker", threads=True)` with retries; per-ticker
-  `fetch_recommendation_mean()`, `fetch_news_headlines()`, `fetch_put_call_ratio()`
-  carry a `_META_DELAY` (0.5s) rate-limit pause and degrade to `None`/`[]` on error.
-- **`store.py`** — SQLite. `connect()` creates the schema; `upsert()` does generic
-  `INSERT OR REPLACE`; `read_table()` reads back. Date columns normalised to ISO text
-  PKs. See [SCHEMA.md](SCHEMA.md).
+  `fetch_recommendation_mean()`, `fetch_news_headlines()`, `fetch_put_call_ratio()`,
+  `fetch_eps_revisions()`, `fetch_analyst_target_mean()`, `fetch_iv_skew()` carry a
+  `_META_DELAY` (0.5s) pause and degrade to `None`/`[]` on error.
+  `fetch_german_headlines()` scrapes `finanznachrichten.de` (best-effort, pure parse
+  in `_parse_finanznachrichten`); `_iv_at` picks the nearest-strike implied vol.
+- **`store.py`** — SQLite. `connect()` creates the schema and runs `_migrate()`
+  (additive `ALTER TABLE`s from `_MIGRATIONS` for pre-Phase-2 DBs); `upsert()` does
+  generic `INSERT OR REPLACE`; `read_table()` reads back. Date columns normalised to
+  ISO text PKs. See [SCHEMA.md](SCHEMA.md).
 
 ### `features/`
 - **`technical.py`** — pure pandas. `sma`/`ema`/`rsi`/`macd`/`bollinger` helpers and
@@ -60,14 +64,19 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   RSI uses Wilder-style EWM; zero average loss yields RSI = 100 via the natural
   `avg_gain/0 → +inf` path.
 - **`cross_asset.py`** — `build_cross_asset_frame()` builds Table-3 ratios
-  (gold/oil, copper/gold, VIX level + sma20 ratio, 10y yield, dollar index, BTC
-  sma20 ratio) from a dict of close-price Series, aligned on the date union.
-- **`sentiment.py`** — `score_headlines()` runs NLTK VADER (lexicon lazily
-  downloaded, shared analyzer behind a lock) and scales the mean compound to
-  `[-3, 3]`. FinBERT + German-source scraping are Phase 2.
+  (gold/oil, copper/gold, VIX level + sma20 ratio, 10y yield, 10y-5y spread, VVIX
+  level, GSCI sma20 ratio, dollar index, BTC sma20 ratio) from a dict of close-price
+  Series, aligned on the date union; series absent from the dict are skipped.
+- **`sentiment.py`** — `score_headlines(model=…)` scores on the `[-3, 3]` scale via
+  one of two lazily-loaded backends behind a shared lock: NLTK VADER (default, mean
+  compound × 3) or FinBERT (`P(pos) − P(neg)` × 3, opt-in `sentiment` extra). Backend
+  defaults to `config.SENTIMENT_MODEL`.
 - **`analyst.py`** — `build_sentiment_row()` assembles a one-row Table-2 frame
-  (recommendation mean, news sentiment, put/call) for a ticker.
-- **`options.py`** — `put_call_ratio()` feature-facing wrapper over the fetch.
+  (recommendation mean, news sentiment over yfinance + German headlines, put/call,
+  EPS revisions, analyst target, IV skew); these are stored/displayed only, not
+  model features.
+- **`options.py`** — `put_call_ratio()` and `iv_skew()` feature-facing wrappers over
+  the fetches.
 
 ### `ml/`
 - **`dataset.py`** — `FEATURE_COLS` is the model contract (technical + cross-asset +
@@ -91,8 +100,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   returns + `beats_benchmark`). Full allocation/risk/leverage/tax logic is Phase 4.
 
 ### `app/`
-- **`streamlit_app.py`** — Phase 1 UI: forecast table, portfolio-vs-NASDAQ curve,
-  feature importances, cross-asset correlation matrix. Cached via `st.cache_data`.
+- **`streamlit_app.py`** — UI: forecast table, portfolio-vs-NASDAQ curve, live
+  analyst/sentiment table, feature importances, cross-asset correlation matrix.
+  Cached via `st.cache_data`.
 - **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
   `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
 
@@ -109,7 +119,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **Sentiment placeholders over history** — yfinance only exposes recent news, so
   historical `news_sentiment_score`/`put_call_ratio` default to neutral in the panel;
   live values are filled only at forecast time. Keeps `FEATURE_COLS` consistent
-  between training and inference.
+  between training and inference. The other live analyst signals (EPS revisions,
+  target, IV skew) likewise have no history and so are stored/displayed only, never
+  trained on (a tree gains nothing from columns constant over training).
 - **Leverage** — 2x/3x modelled as daily-rebalanced constant-leverage return
   multipliers (documented assumption; real LETF instruments revisited later).
 - **Network isolation** — all network calls live in `data.fetch`; every other module
