@@ -104,9 +104,18 @@ history (no historical news feed) and filled live at forecast time.
 - **Tuning** — `model.tune` / `tune_and_train` pick the best `PARAM_GRID` entry by
   mean TSCV ROC-AUC; `concinvest run` tunes by default (`--no-tune` to skip), and
   prints the chosen params. Selected params live on `TrainedModel.params`.
-- **Open** — feature-importance-driven pruning of `FEATURE_COLS`, and the headline
-  "beat NASDAQ" target, which is **gated on the Phase 4 allocation/leverage/tax
-  engine** (the current confidence-scaled basket is not expected to clear NASDAQ).
+- **Feature pruning** — `model.select_features` drops features below
+  `MIN_IMPORTANCE` (action encoding always kept); `tune_and_train(prune=True)` refits
+  on the reduced set. `FEATURE_COLS` stays the stable superset callers build;
+  `TrainedModel.features` records the columns actually used.
+- **Live result (validation year, `--n 10000`)** — portfolio **+15.2%** vs NASDAQ
+  **+35.2%** → below benchmark. Diagnosis: the RF's mean buy-confidence sits ~0.55
+  (CV AUC ~0.57), so `target = 0.9 × confidence` parks the book ~50% in cash and
+  structurally lags a +35% market. The headline "beat NASDAQ" target is **not yet
+  met**; the lever is the confidence→exposure mapping (see Open).
+- **Open** — make the exposure mapping faithful to the base case (stay ~90% invested
+  unless a genuine bearish/risk signal fires) rather than scaling linearly by a
+  near-0.5 confidence — without overfitting to the single validation year.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -131,7 +140,7 @@ history (no historical news feed) and filled live at forecast time.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 40 tests, offline (synthetic fixtures)
+uv run pytest                                   # 41 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
@@ -151,9 +160,9 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ## 7. Remaining phases — detail
 
 - **Phase 3** (🔄) — done: time-ordered generator (100k-capable), honest
-  date-based train/validate split, TSCV hyperparameter tuning. Remaining:
-  feature-importance-driven pruning of `FEATURE_COLS`; reach validation return >
-  NASDAQ (depends on Phase 4 allocation/leverage/tax).
+  date-based train/validate split, TSCV hyperparameter tuning, feature-importance
+  pruning. Remaining: reach validation return > NASDAQ — live read is +15.2% vs
+  +35.2%; the lever is a base-case-faithful confidence→exposure mapping (§5c Open).
 - **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
   `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
   sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven

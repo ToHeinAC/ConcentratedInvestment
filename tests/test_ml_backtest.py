@@ -54,6 +54,17 @@ def test_tune_returns_grid_params(synth_market, synth_raw):
     assert all(0.0 <= s <= 1.0 for s in scores)
 
 
+def test_prune_keeps_action_features_and_forecasts(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=900, horizon=20, seed=11)
+    m = model.tune_and_train(X, y, n_splits=3, prune=True)
+    assert set(m.features).issubset(set(dataset.FEATURE_COLS))
+    assert set(dataset.ACTION_FEATURES).issubset(set(m.features))
+    # Forecast/predict still work on the pruned feature set.
+    snaps = {t: panel.xs(t, level="ticker").iloc[-1] for t in synth_market}
+    assert forecast.forecast(m, snaps, threshold=0.0)
+
+
 def test_train_and_forecast_five_fields(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=800, horizon=20, seed=2)

@@ -14,7 +14,10 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 
-from .dataset import FEATURE_COLS
+from .dataset import ACTION_FEATURES, FEATURE_COLS
+
+# Features below this RandomForest importance are pruned (action encoding is kept).
+MIN_IMPORTANCE: float = 0.02
 
 
 # Small TimeSeriesSplit grid for Phase 3 tuning (kept tight so live runs stay fast).
@@ -31,14 +34,15 @@ class TrainedModel:
     cv_scores: list[float] = field(default_factory=list)
     feature_importance: dict[str, float] = field(default_factory=dict)
     params: dict = field(default_factory=dict)
+    features: list[str] = field(default_factory=lambda: list(FEATURE_COLS))
 
     @property
     def mean_cv(self) -> float:
         return float(np.mean(self.cv_scores)) if self.cv_scores else float("nan")
 
     def predict_confidence(self, X: pd.DataFrame) -> np.ndarray:
-        """P(profitable) for each row, aligned to FEATURE_COLS."""
-        return self.clf.predict_proba(X[FEATURE_COLS])[:, 1]
+        """P(profitable) for each row, over the model's (possibly pruned) features."""
+        return self.clf.predict_proba(X[self.features])[:, 1]
 
 
 def _cv_auc(clf, X: pd.DataFrame, y: pd.Series, n_splits: int) -> list[float]:
@@ -78,30 +82,47 @@ def train(
     n_splits: int = 5,
     seed: int = 42,
     params: dict | None = None,
+    features: list[str] | None = None,
 ) -> TrainedModel:
     """Fit a RandomForest with TimeSeriesSplit CV and feature importances.
 
-    ``params`` (e.g. from :func:`tune`) overrides the default hyperparameters.
+    ``params`` (e.g. from :func:`tune`) overrides the default hyperparameters;
+    ``features`` restricts the column set (default all ``FEATURE_COLS``).
     """
-    X = X[FEATURE_COLS]
+    features = features or list(FEATURE_COLS)
+    X = X[features]
     params = params or {"n_estimators": n_estimators, "max_depth": None, "min_samples_leaf": 5}
     clf = RandomForestClassifier(n_jobs=-1, random_state=seed, **params)
 
     cv_scores = _cv_auc(clf, X, y, n_splits)
     clf.fit(X, y)
     importance = dict(
-        sorted(
-            zip(FEATURE_COLS, clf.feature_importances_),
-            key=lambda kv: kv[1],
-            reverse=True,
-        )
+        sorted(zip(features, clf.feature_importances_), key=lambda kv: kv[1], reverse=True)
     )
     return TrainedModel(
-        clf=clf, cv_scores=cv_scores, feature_importance=importance, params=params
+        clf=clf, cv_scores=cv_scores, feature_importance=importance,
+        params=params, features=features,
     )
 
 
-def tune_and_train(X: pd.DataFrame, y: pd.Series, n_splits: int = 5, seed: int = 42) -> TrainedModel:
-    """Convenience: TSCV-tune hyperparameters, then fit on all of ``(X, y)``."""
+def select_features(trained: TrainedModel, min_importance: float = MIN_IMPORTANCE) -> list[str]:
+    """Keep features at/above ``min_importance`` plus the action encoding, in
+    ``FEATURE_COLS`` order (so the model contract stays a stable superset)."""
+    keep = {f for f, imp in trained.feature_importance.items() if imp >= min_importance}
+    keep.update(ACTION_FEATURES)
+    return [f for f in FEATURE_COLS if f in keep]
+
+
+def tune_and_train(
+    X: pd.DataFrame, y: pd.Series, n_splits: int = 5, seed: int = 42, prune: bool = True
+) -> TrainedModel:
+    """TSCV-tune hyperparameters, then fit; optionally prune low-importance features
+    and refit on the reduced set."""
     best_params, _ = tune(X, y, n_splits=n_splits, seed=seed)
-    return train(X, y, n_splits=n_splits, seed=seed, params=best_params)
+    full = train(X, y, n_splits=n_splits, seed=seed, params=best_params)
+    if not prune:
+        return full
+    feats = select_features(full)
+    if 0 < len(feats) < len(full.features):
+        return train(X, y, n_splits=n_splits, seed=seed, params=best_params, features=feats)
+    return full
