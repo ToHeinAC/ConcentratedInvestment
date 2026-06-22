@@ -19,8 +19,8 @@ venv/
 build/
 dist/
 
-# Runtime data (SQLite db, downloads)
-data/
+# Runtime data (SQLite db, downloads) — repo-root only, not src/concinvest/data
+/data/
 *.sqlite
 
 # OS

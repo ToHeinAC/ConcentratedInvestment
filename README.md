@@ -10,8 +10,9 @@ validated on the held-out final year.
 See [`Story.md`](./Story.md) for the domain spec and [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 for the phased build plan.
 
-> **Status: Phase 0 (scaffold).** Package skeleton, ticker universe, config, CLI, tests, Docker
-> stub, and a placeholder Streamlit app. No data pipeline, model, or backtest yet.
+> **Status: Phase 1 (thin end-to-end slice).** Live pipeline: fetch core tickers → SQLite →
+> technical + cross-asset + sentiment features → synthetic dataset → RandomForest → 5-field
+> forecast → backtest vs. NASDAQ → Streamlit UI. Beating the benchmark is the Phase 3 tuning goal.
 
 ---
 
@@ -46,6 +47,12 @@ uv sync
 
 # Show config + ticker universe
 uv run concinvest info
+
+# Daily ETL: fetch core tickers + compute/store features
+uv run concinvest update
+
+# Full Phase 1 slice: fetch -> model -> forecast -> backtest (prints results)
+uv run concinvest run --n 4000          # add --sentiment for live news scoring
 
 # Run tests
 uv run pytest
