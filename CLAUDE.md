@@ -69,6 +69,16 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ### 5.1 Documentation
 For the project´s documentation, use IMPLEMENTATION.md as your main reference. Keep this one very compact and readable (under 500 lines). This one shall refer to the deep documentation of each component, which is under docs/ folder, e.g. docs/architecture.md etc. Generate a README.md
 
+**Documentation map (read before working on a component):**
+- [Story.md](Story.md) @Story.md PRD: original purpose, portfolio rules, ticker universe, feature/ML targets.
+- [IMPLEMENTATION.md](IMPLEMENTATION.md) @IMPLEMENTATION.md Current state, phase status, module map, run/verify — start here.
+- [docs/architecture.md](docs/architecture.md) @docs/architecture.md Module responsibilities, data flow diagram, key design decisions.
+- [docs/SCHEMA.md](docs/SCHEMA.md) @docs/SCHEMA.md SQLite tables (ohlcv_raw, daily_market, sentiment_analyst, cross_asset) + the `FEATURE_COLS` model contract.
+
+**Current state:** Phase 1 done — live end-to-end slice (fetch → features → SQLite → synthetic dataset → RandomForest → 5-field forecast → backtest vs NASDAQ → Streamlit). Beating NASDAQ is the Phase 3 tuning target. Phases 2–5 planned (see IMPLEMENTATION.md §3).
+
+**Conventions:** Python 3.11+, `uv` (run `uv run …`), `pytest` (offline via `tests/conftest.py` synthetic fixtures — keep network out of the suite). All network access stays in `data/fetch.py`. Streamlit on port 8505. Functions ≤ ~40 lines; tests-first for behaviour changes; secrets never committed; runtime `data/` gitignored.
+
 ### 5.2 Efficency
 This project must be implemented efficiently, without unnecessary code or complexity. For this follow the rules:
 - Keep implementation and documentation precision such that the author as well as Claude Code etc. do not get confused.

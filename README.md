@@ -83,20 +83,29 @@ lsof -ti:8505 | xargs -r kill -9
 
 ```
 src/concinvest/
-├── config.py          # paths, dates, portfolio/risk constants
-├── cli.py             # `concinvest` entrypoint
-├── data/              # tickers.py (universe) · fetch.py · store.py   [fetch/store: later phases]
-├── features/          # technical · cross_asset · analyst · sentiment · options   [later phases]
-├── portfolio/         # state · rules (allocation/risk) · tax (German)            [later phases]
-├── ml/                # dataset (synthetic) · model (RandomForest) · forecast      [later phases]
-├── backtest/          # engine: replay vs. NASDAQ                                  [later phases]
+├── config.py          # paths, dates, portfolio/risk constants, port 8505
+├── cli.py             # `concinvest {info,update,run}`
+├── pipeline.py        # run_phase1 / fetch_and_store orchestration
+├── data/              # tickers.py (universe) · fetch.py (yfinance) · store.py (SQLite)
+├── features/          # technical · cross_asset · sentiment (VADER) · analyst · options
+├── ml/                # dataset (panel + synthetic) · model (RandomForest+TSCV) · forecast
+├── backtest/          # engine: model-timed portfolio vs. NASDAQ
+├── portfolio/         # state · rules · tax (German)                     [Phase 4]
 └── app/               # streamlit_app.py · exit_button.py
-tests/                 # pytest
+tests/                 # pytest (20 tests, offline synthetic fixtures)
+docs/                  # architecture.md · SCHEMA.md
 ```
 
 Ticker universe: **5 portfolio stocks**, 5 global indices, commodities, bonds/rates, currency &
 volatility, and crypto — 27 tickers total, with a 13-ticker **core slice** used by the Phase 1
 vertical slice.
+
+### Documentation
+
+- [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) — current state, phase status, run/verify (start here)
+- [`docs/architecture.md`](./docs/architecture.md) — modules, data flow, design decisions
+- [`docs/SCHEMA.md`](./docs/SCHEMA.md) — database tables + model feature contract
+- [`Story.md`](./Story.md) — original product spec / PRD
 
 ---
 
@@ -105,7 +114,7 @@ vertical slice.
 | Phase | Scope |
 |-------|-------|
 | **0** | Scaffold — package, config, tickers, CLI, tests, Docker, exit button *(done)* |
-| **1** | Thin end-to-end slice: fetch core tickers → SQLite → minimal features (incl. baseline sentiment) → RandomForest → forecast → simple backtest → minimal UI |
+| **1** | Thin end-to-end slice: fetch → SQLite → features (incl. baseline sentiment) → RandomForest → forecast → backtest → UI *(done)* |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum |
 | **3** | Full 100k-datapoint synthetic dataset, TimeSeriesSplit CV, feature importance, tuning |
 | **4** | Full rules engine + German tax, integrated into the backtest |
