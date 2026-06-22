@@ -25,6 +25,10 @@ INITIAL_CAPITAL_EUR: float = 100_000.0
 BASE_STOCK_ALLOCATION: float = 0.90  # 90% stocks
 BASE_CASH_ALLOCATION: float = 0.10  # 10% cash
 
+# Base-case per-name allocation as absolute fractions of the portfolio
+# (Story.md: 12% underlying + 3% 2x + 3% 3x = 18% per name; 5 names = 90%).
+BASE_PER_NAME_SPLIT: dict[str, float] = {"stock": 0.12, "2x": 0.03, "3x": 0.03}
+
 # Risk rules (fractions of total portfolio value).
 PER_NAME_CAP: float = 0.33  # trim when a single name exceeds this
 TRIM_FRACTION: float = 0.03  # trim 3% of portfolio value
