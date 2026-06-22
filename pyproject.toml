@@ -1,0 +1,51 @@
+[project]
+name = "concinvest"
+version = "0.0.0"
+description = "ML-based concentrated portfolio recommendation system fed by Yahoo Finance data"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Tobias Hein" }]
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "yfinance>=0.2.40",
+    "scikit-learn>=1.5",
+    "streamlit>=1.36",
+    "requests>=2.32",
+    "beautifulsoup4>=4.12",
+    "nltk>=3.9",
+    "SQLAlchemy>=2.0",
+]
+
+[project.optional-dependencies]
+# Heavier sentiment stack, pulled in from Phase 2 onward.
+sentiment = [
+    "transformers>=4.43",
+    "torch>=2.3",
+]
+# Optional macro data (2Y yield / 10Y-2Y spread).
+macro = [
+    "fredapi>=0.5",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+concinvest = "concinvest.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/concinvest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

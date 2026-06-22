@@ -13,6 +13,15 @@ __pycache__/
 .venv/
 venv/
 .ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Runtime data (SQLite db, downloads)
+data/
+*.sqlite
 
 # OS
 .DS_Store
