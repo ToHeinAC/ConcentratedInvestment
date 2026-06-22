@@ -1,8 +1,8 @@
 """Safe-exit helper for the Streamlit app.
 
 Dynamically finds the port the current Streamlit server is bound to (the app runs
-on ports > 8510, e.g. 8511) and kills only that process group. It never touches an
-SSH connection.
+on port 8505 by project convention) and kills only that process group. It never
+touches an SSH connection.
 """
 
 from __future__ import annotations
@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import subprocess
 
+from concinvest import config
 
-def current_port(default: int = 8511) -> int:
-    """Best-effort discovery of the running Streamlit server port (> 8510)."""
+
+def current_port(default: int = config.STREAMLIT_PORT) -> int:
+    """Best-effort discovery of the running Streamlit server port."""
     # Streamlit exposes its port via this env var when launched with --server.port.
     env_port = os.environ.get("STREAMLIT_SERVER_PORT")
     if env_port and env_port.isdigit():
@@ -21,7 +23,7 @@ def current_port(default: int = 8511) -> int:
         from streamlit import config as st_config  # local import: optional dep
 
         port = int(st_config.get_option("server.port"))
-        if port > 8510:
+        if port > 0:
             return port
     except Exception:
         pass

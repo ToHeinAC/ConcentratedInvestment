@@ -87,7 +87,7 @@ ConcentratedInvestment/
 │   │   └── engine.py           # replay 2020→now under rules; compare vs NASDAQ
 │   ├── app/
 │   │   ├── streamlit_app.py    # UI (perf, allocations, forecast table, 10x10 corr, regime)
-│   │   └── exit_button.py      # safe-exit helper (find port >8510, lsof|kill, spare SSH)
+│   │   └── exit_button.py      # safe-exit helper (find port 8505, lsof|kill, spare SSH)
 │   ├── pipeline.py             # fetch → features → store (daily ETL)
 │   └── cli.py                  # entrypoints: update, train, forecast, backtest
 └── tests/                      # pytest, mirrors src layout
@@ -158,7 +158,7 @@ rules engine and reports return vs. `^IXIC`.
 
 ## 7. Streamlit UI (`app/streamlit_app.py`)
 
-KISS + modern. Runs on a port **> 8510** (e.g. 8511). Displays:
+KISS + modern. Runs on port **8505**. Displays:
 
 - Portfolio performance over time vs. NASDAQ.
 - Current allocations (incl. leverage breakdown) and cash.
@@ -242,7 +242,7 @@ Correlation matrix, regime detection, richer performance views; **daily cron** (
   couple of tickers; assert a valid 5-field forecast is produced.
 - **Backtest check**: report renders and asserts the NASDAQ comparison is computed over the
   validation year.
-- **Manual UI check**: `streamlit run` on a port > 8510; confirm UI loads and the safe-exit button
+- **Manual UI check**: `streamlit run` on port 8505; confirm UI loads and the safe-exit button
   kills only the app port (not SSH).
 ```
 

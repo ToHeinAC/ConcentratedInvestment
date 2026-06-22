@@ -1,8 +1,8 @@
 """Streamlit entrypoint (Phase 0 placeholder).
 
-Run on a port > 8510, e.g.::
+Run on port 8505 (project convention)::
 
-    streamlit run src/concinvest/app/streamlit_app.py --server.port 8511
+    streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 Real views (performance vs. NASDAQ, allocations, forecast table, 10x10 correlation
 matrix, regime detection) arrive in later phases.

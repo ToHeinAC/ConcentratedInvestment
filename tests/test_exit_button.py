@@ -2,6 +2,7 @@
 
 import os
 
+from concinvest import config
 from concinvest.app import exit_button
 
 
@@ -10,10 +11,11 @@ def test_current_port_prefers_env(monkeypatch):
     assert exit_button.current_port() == 8523
 
 
-def test_current_port_default_is_above_8510(monkeypatch):
+def test_current_port_default_matches_config(monkeypatch):
     monkeypatch.delitem(os.environ, "STREAMLIT_SERVER_PORT", raising=False)
-    # default fallback must respect the >8510 rule
-    assert exit_button.current_port() > 8510
+    # default fallback must be the project-configured port
+    assert exit_button.current_port() == config.STREAMLIT_PORT
+    assert config.STREAMLIT_PORT == 8505
 
 
 def test_is_ssh_for_current_process():

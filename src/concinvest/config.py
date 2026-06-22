@@ -41,6 +41,9 @@ LEVERAGE_TIERS: tuple[int, ...] = (1, 2, 3)
 # --- Benchmark -----------------------------------------------------------
 BENCHMARK_TICKER: str = "^IXIC"  # NASDAQ Composite
 
+# --- Streamlit -----------------------------------------------------------
+STREAMLIT_PORT: int = 8505
+
 
 def ensure_dirs() -> None:
     """Create runtime directories that are gitignored."""

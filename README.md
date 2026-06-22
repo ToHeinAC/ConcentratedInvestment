@@ -50,8 +50,8 @@ uv run concinvest info
 # Run tests
 uv run pytest
 
-# Launch the Streamlit app (port > 8510 by project convention)
-uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8511
+# Launch the Streamlit app (port 8505 by project convention)
+uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
 
 Without `uv` you can also run directly:
@@ -67,7 +67,7 @@ The Streamlit sidebar has a **safe-exit button** that finds the running port and
 process (never your SSH session). Manual equivalent:
 
 ```bash
-lsof -ti:8511 | xargs -r kill -9
+lsof -ti:8505 | xargs -r kill -9
 ```
 
 ---
@@ -112,7 +112,7 @@ See [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) for details.
 
 ```bash
 docker build -t concinvest .
-docker run -p 8511:8511 concinvest
+docker run -p 8505:8505 concinvest
 ```
 
 ---
