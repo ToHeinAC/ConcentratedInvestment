@@ -48,7 +48,7 @@ data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite)
 features/  technical.py · cross_asset.py · sentiment.py (VADER/FinBERT) · analyst.py · options.py
 ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields)
 portfolio/ state.py (leveraged lots+cash) · tax.py (Abgeltungsteuer) · rules.py (guardrails)
-backtest/  engine.py (model-timed + rules-based portfolio vs NASDAQ)
+backtest/  engine.py (forecast-driven + rules-based leveraged portfolio vs NASDAQ)
 app/       streamlit_app.py · exit_button.py
 config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 ```
@@ -120,16 +120,18 @@ history (no historical news feed) and filled live at forecast time.
   drawdown → de-risk toward cash; every sell capped at 10%/day. `apply_guardrails`
   runs them per day (de-risk, then trim).
 - **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
-  guardrails vs NASDAQ (separate from the model-timed Phase 1 backtest).
-- **Open** — crisis 100%/2-month-revert path, dividends on underlying, forecast-driven
-  buys/sells and cash re-entry, and wiring the rules backtest into the live
-  pipeline/UI. "Optimal weighting" stays delegated to the ML confidence.
+  guardrails vs NASDAQ (sell-side only).
+- **`backtest.run_forecast_backtest`** — the book's target equity exposure tracks the
+  model's mean buy-confidence (lagged, scaled by the 90% base allocation) with a
+  `REBALANCE_BAND` dead-band, cash re-entry, daily guardrails, and tax. **This is now
+  the pipeline/UI backtest.** "Optimal weighting" stays delegated to ML confidence.
+- **Open** — crisis 100%/2-month-revert path and dividends on the underlying.
 
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 39 tests, offline (synthetic fixtures)
+uv run pytest                                   # 40 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
@@ -154,9 +156,9 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   NASDAQ (depends on Phase 4 allocation/leverage/tax).
 - **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
   `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
-  sell, 20% drawdown→cash), `backtest.run_rules_backtest`. Remaining: crisis 100% /
-  2-month revert, dividends on underlying, forecast-driven trading + cash re-entry,
-  and wiring the rules backtest into the live pipeline/UI.
+  sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven
+  exposure + re-entry + guardrails + tax), now wired into the pipeline. Remaining:
+  crisis 100% / 2-month revert, dividends on the underlying.
 - **Phase 5** — correlation/regime UI, `pipeline.fetch_and_store` daily cron, Docker.
 
 ## 8. Conventions

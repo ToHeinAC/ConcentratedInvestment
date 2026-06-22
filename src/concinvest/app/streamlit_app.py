@@ -75,7 +75,7 @@ def _load(n_dataset: int, with_sentiment: bool):
 def main() -> None:
     st.set_page_config(page_title="ConcentratedInvestment", page_icon="📈", layout="wide")
     st.title("ConcentratedInvestment")
-    st.caption(f"v{__version__} · Phase 2 — full universe, richer sentiment & analyst signals")
+    st.caption(f"v{__version__} · forecast-driven leveraged portfolio, rules & German tax")
 
     with st.sidebar:
         st.header("Controls")

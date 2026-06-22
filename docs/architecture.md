@@ -31,7 +31,7 @@ status see [../IMPLEMENTATION.md](../IMPLEMENTATION.md); for the database tables
             │
         ┌───┴────────────────────────────┐
         ▼                                ▼
-   ml.forecast.forecast          backtest.engine.run_backtest
+   ml.forecast.forecast          backtest.engine.run_forecast_backtest
    (5-field recommendation)      (portfolio value vs NASDAQ)
         │                                │
         └────────────► app.streamlit_app ◄──────────┘
@@ -110,11 +110,13 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   runs them per day. Crisis/dividends/forecast-driven trading are the next increment.
 
 ### `backtest/`
-- **`engine.py`** — `run_backtest()` holds an equal-weight 5-stock basket but scales
-  daily equity exposure by the model's mean buy-confidence (rest in cash), lagged one
-  day to stay point-in-time. `run_rules_backtest()` replays the base-case leveraged
-  book under the `portfolio` guardrails + tax. Both return a `BacktestResult` (curve +
-  portfolio/benchmark returns + `beats_benchmark`).
+- **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
+  portfolio/benchmark returns + `beats_benchmark`): `run_backtest()` (Phase 1
+  confidence-scaled equal-weight basket), `run_rules_backtest()` (base-case leveraged
+  book under guardrails, sell-side only), and `run_forecast_backtest()` — **the
+  pipeline's backtest** — the leveraged book whose target equity exposure tracks the
+  model's mean buy-confidence (lagged, scaled by the 90% base allocation) with a
+  `REBALANCE_BAND` dead-band, cash re-entry, daily guardrails, and German tax.
 
 ### `app/`
 - **`streamlit_app.py`** — UI: forecast table, portfolio-vs-NASDAQ curve, live

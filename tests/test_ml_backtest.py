@@ -80,6 +80,19 @@ def test_rules_backtest_produces_curve(synth_market, synth_raw):
     assert isinstance(res.beats_benchmark, bool)
 
 
+def test_forecast_backtest_produces_curve(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=4)
+    trained = model.train(X, y, n_estimators=50, n_splits=3)
+    bench = synth_raw["^IXIC"]["close"]
+    bench.index = pd.to_datetime(list(bench.index))
+    res = engine.run_forecast_backtest(synth_market, bench, trained, panel)
+    assert {"portfolio", "benchmark"}.issubset(res.curve.columns)
+    assert len(res.curve) > 50
+    assert (res.curve["portfolio"] > 0).all()
+    assert isinstance(res.beats_benchmark, bool)
+
+
 def test_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=3)

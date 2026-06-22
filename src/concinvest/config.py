@@ -42,6 +42,10 @@ CAPITAL_GAINS_TAX_RATE: float = 0.25
 # Leverage tiers available (long only).
 LEVERAGE_TIERS: tuple[int, ...] = (1, 2, 3)
 
+# Rebalance dead-band: only act when invested fraction deviates from the model's
+# target exposure by more than this, to keep the base case "mostly no trades".
+REBALANCE_BAND: float = 0.10
+
 # --- Sentiment -----------------------------------------------------------
 # News-sentiment backend: "vader" (light, default) or "finbert" (transformers,
 # opt-in via the ``sentiment`` extra). FinBERT is loaded lazily on first use.

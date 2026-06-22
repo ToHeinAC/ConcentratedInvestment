@@ -126,3 +126,74 @@ def run_rules_backtest(
     p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
     b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
     return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret)
+
+
+def _rebalance_to_target(state: pstate.PortfolioState, target_frac: float, stocks: list[str]) -> None:
+    """Nudge invested fraction toward ``target_frac`` within the daily move cap.
+
+    Buys deploy toward the base-case per-name weights; sells reduce names
+    proportionally. A dead-band keeps the book mostly static (base case).
+    """
+    total = state.total_value()
+    if total <= 0:
+        return
+    invested_frac = (total - state.cash) / total
+    dev = target_frac - invested_frac
+    if abs(dev) < config.REBALANCE_BAND:
+        return
+    move = min(abs(dev), config.MAX_DAILY_SELL) * total  # cap daily turnover
+    if dev > 0:
+        _deploy(state, move, stocks)
+    else:
+        for ticker in stocks:
+            cap = config.MAX_DAILY_SELL * state.total_value()
+            state.sell_name(ticker, min(move / len(stocks), cap))
+
+
+def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> None:
+    """Deploy ``amount`` of cash across stocks by the base-case tier split."""
+    split = config.BASE_PER_NAME_SPLIT
+    tier_of = {"stock": 1, "2x": 2, "3x": 3}
+    weight_sum = sum(split.values())
+    per_stock = amount / len(stocks)
+    for ticker in stocks:
+        for tier_name, weight in split.items():
+            state.buy(ticker, tier_of[tier_name], per_stock * weight / weight_sum)
+
+
+def run_forecast_backtest(
+    market: dict[str, pd.DataFrame],
+    benchmark_close: pd.Series,
+    model: TrainedModel,
+    panel: pd.DataFrame,
+    start: str | None = None,
+    capital: float = config.INITIAL_CAPITAL_EUR,
+) -> BacktestResult:
+    """Rules + forecast backtest: the base-case leveraged book whose target equity
+    exposure tracks the model's mean buy-confidence (lagged, scaled by the 90% base
+    allocation), with cash re-entry, daily guardrails, and German tax."""
+    closes = pd.DataFrame({t: df["close"] for t, df in market.items()})
+    closes.index = pd.to_datetime(closes.index)
+    closes = closes.sort_index()
+    if start:
+        closes = closes.loc[start:]
+    rets = closes.pct_change().fillna(0.0)
+    dates = pd.DatetimeIndex(rets.index)
+
+    exposure = _daily_exposure(model, panel, dates)  # mean buy-confidence, lagged
+    stocks = list(market)
+    state = pstate.build_base_case(capital, stocks=stocks)
+    values: list[float] = []
+    for date, row in rets.iterrows():
+        state.mark(row.to_dict())
+        rules.apply_guardrails(state)
+        target = config.BASE_STOCK_ALLOCATION * float(exposure.get(date, 1.0))
+        _rebalance_to_target(state, target, stocks)
+        values.append(state.total_value())
+
+    portfolio = pd.Series(values, index=dates)
+    benchmark = _benchmark_curve(benchmark_close, dates)
+    curve = pd.DataFrame({"portfolio": portfolio, "benchmark": benchmark}).dropna()
+    p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
+    b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
+    return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret)

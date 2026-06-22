@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from . import config
-from .backtest.engine import BacktestResult, run_backtest
+from .backtest.engine import BacktestResult, run_forecast_backtest
 from .data import fetch, store, tickers
 from .features import analyst, cross_asset, technical
 from .ml import dataset, forecast, model
@@ -142,13 +142,13 @@ def run_phase1(
     snaps = _live_snapshots(panel, sentiment_df)
     forecasts = forecast.forecast(trained, snaps)
 
-    # Backtest over the validation window (last VALIDATION_YEARS).
+    # Rules + forecast backtest over the validation window (last VALIDATION_YEARS).
     val_start = (pd.Timestamp(market[next(iter(market))].index[-1])
                  - pd.DateOffset(years=config.VALIDATION_YEARS)).strftime("%Y-%m-%d")
     nasdaq = (raw[config.BENCHMARK_TICKER]["close"]
               if config.BENCHMARK_TICKER in raw
               else pd.DataFrame({t: df["close"] for t, df in market.items()}).mean(axis=1))
-    bt = run_backtest(market, nasdaq, trained, panel, start=val_start)
+    bt = run_forecast_backtest(market, nasdaq, trained, panel, start=val_start)
 
     corr = _correlation_matrix({t: df["close"] for t, df in raw.items()})
     return Phase1Result(
