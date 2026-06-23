@@ -378,7 +378,11 @@ def _render_strategy(data: dict) -> None:
                                      name=tier, line={"color": _TIER_COLOR.get(tier)}),
                           row=2, col=1)
             if not tdf.empty:
-                _add_markers(fig, 2, line, tdf[tdf["position"] == tier], size=9)
+                # This tier's trades, plus any aggregate "all (pro-rata)" rows (the
+                # latter only appear with a stale pre-per-tier engine — still mark them
+                # on every tier so signals aren't lost before a restart).
+                ev = tdf[tdf["position"].isin([tier, "all (pro-rata)"])]
+                _add_markers(fig, 2, line, ev, size=9)
 
     # Row 3: NASDAQ benchmark over the same window.
     nq = _series(data["nasdaq"]).loc[start:end]
