@@ -161,7 +161,7 @@ def _render_current(data: dict) -> None:
             width="stretch", hide_index=True,
         )
     with col_pie:
-        st.plotly_chart(_positions_pie(positions), use_container_width=True)
+        st.plotly_chart(_positions_pie(positions), width="stretch")
     st.caption(
         "Actual end-of-backtest book — evolved from the 90/10 base case over the "
         "validation window. Weights and cash are live (cash rises on de-risk, falls "
@@ -176,7 +176,7 @@ def _render_correlation(corr: pd.DataFrame) -> None:
     """Cross-asset correlation (recent 60 days) with three selectable views."""
     head, legend = st.columns([4, 1])
     head.subheader("Cross-asset correlation (recent 60 days)")
-    with legend.popover("Ticker legend", use_container_width=True):
+    with legend.popover("Ticker legend", width="stretch"):
         st.dataframe(
             pd.DataFrame({"ticker": list(corr.columns),
                           "name": [tickers.NAMES.get(t, t) for t in corr.columns]}),
@@ -205,7 +205,7 @@ def _render_correlation(corr: pd.DataFrame) -> None:
                     "cmin": -1, "cmax": 1, "showscale": True}))
         fig.update_layout(height=460, xaxis_title=f"correlation with {stock}",
                           xaxis_range=[-1, 1], margin={"l": 0, "r": 0, "t": 10, "b": 0})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 _RATINGS = [(1.5, "Strong Buy"), (2.5, "Buy"), (3.5, "Hold"), (4.5, "Sell")]
@@ -276,7 +276,7 @@ def _render_forecast(data: dict) -> None:
     fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 10, "b": 0},
                       xaxis={"categoryorder": "total descending"},
                       yaxis_title="importance")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _series(frame_or_series) -> pd.Series:
@@ -291,7 +291,11 @@ def _markers_at(price: pd.Series, dates) -> pd.Series:
     dates = pd.DatetimeIndex(dates)
     if len(dates) == 0:
         return pd.Series(dtype=float)
-    s = price.reindex(price.index.union(dates)).sort_index().ffill()
+    # Dedupe the price index before reindexing: a doubled market bar (repeated
+    # timestamp) makes the union axis non-unique and breaks reindex. dates may still
+    # repeat (several trades share one signal bar) — that's a valid reindex target.
+    s = price[~price.index.duplicated(keep="last")].sort_index()
+    s = s.reindex(s.index.union(pd.Index(dates).unique())).ffill()
     return s.reindex(dates)
 
 
@@ -400,12 +404,12 @@ def _render_strategy(data: dict) -> None:
     fig.update_yaxes(title_text="€", row=2, col=1)
     fig.update_layout(height=760, margin={"l": 0, "r": 0, "t": 50, "b": 0},
                       legend={"orientation": "h", "y": 1.07})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     if not has_tiers:
         st.info("Per-tier balances unavailable — press **Run / refresh**.")
 
     n = 0 if tdf is None or tdf.empty else len(tdf)
-    with st.popover(f"Show buys & sells ({n})", use_container_width=True):
+    with st.popover(f"Show buys & sells ({n})", width="stretch"):
         if tdf is not None and not tdf.empty:
             st.dataframe(
                 tdf[["date", "action", "position", "amount_eur"]]
