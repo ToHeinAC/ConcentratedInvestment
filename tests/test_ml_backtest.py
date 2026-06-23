@@ -99,6 +99,17 @@ def test_apply_book_limits_caps_buys_at_cash_and_sells_at_holdings():
     assert "D" not in by                # no position to sell
 
 
+def test_apply_book_limits_drops_orders_below_min_trade():
+    fcs = [
+        forecast.Forecast("A", "buy", 9_800.0, "stock", 0.7),  # leaves 200 € cash
+        forecast.Forecast("B", "buy", 1_000.0, "2x", 0.6),     # capped to 200 € -> dropped
+        forecast.Forecast("C", "sell", 1_000.0, "3x", 0.8),    # only 300 € held -> dropped
+    ]
+    out = forecast.apply_book_limits(fcs, cash=10_000.0, held={("C", "3x"): 300.0})
+    # B and C fall below MIN_TRADE_EUR after capping; only A (9.8k) survives.
+    assert {f.ticker for f in out} == {"A"}
+
+
 def test_rules_backtest_produces_curve(synth_market, synth_raw):
     bench = synth_raw["^IXIC"]["close"]
     bench.index = pd.to_datetime(list(bench.index))

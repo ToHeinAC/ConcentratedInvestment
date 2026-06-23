@@ -247,7 +247,10 @@ def _deploy_name(
     state: pstate.PortfolioState, ticker: str, amount: float
 ) -> list[rules.Trade]:
     """Deploy ``amount`` of cash into one name by the base-case tier split (9/4.5/4.5).
-    Returns one buy ``Trade`` **per funded tier** (each with its actual € invested)."""
+    Returns one buy ``Trade`` **per funded tier** (each with its actual € invested).
+    Orders below ``MIN_TRADE_EUR`` are skipped (Story.md: no trade < €500)."""
+    if amount < config.MIN_TRADE_EUR:
+        return []
     split = config.BASE_PER_NAME_SPLIT
     weight_sum = sum(split.values())
     trades: list[rules.Trade] = []
@@ -278,7 +281,7 @@ def _sell_proportional(
     aggregate 'all (pro-rata)' row)."""
     name_val = state.name_value(ticker)
     gross = min(amount, name_val)
-    if gross <= 0:
+    if gross < config.MIN_TRADE_EUR:  # Story.md: no order smaller than €500
         return []
     frac = gross / name_val
     by_tier: dict[int, float] = {}

@@ -187,7 +187,10 @@ history (no historical news feed) and filled live at forecast time.
   routine confidence-rebalance (in `backtest.engine`) sells **pro-rata** across tiers,
   preserving the leverage edge in up-markets (tier-grading there cost ~5pp in the
   walk-forward — §5c). The 6% floor across 5 names keeps **cash < 70%** (`MAX_CASH`)
-  structurally (book ≥ 30% invested at all times).
+  structurally (book ≥ 30% invested at all times). **No order below `MIN_TRADE_EUR`
+  (€500)** is placed — gated in `sell_riskiest_first`, `_deploy_name`, `_sell_proportional`
+  and the forecast's `apply_book_limits`; this also suppresses the tiny daily
+  underlying-dominance micro-trims at the 9≡9 boundary base case.
 - **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
   guardrails vs NASDAQ (sell-side only).
 - **`backtest.run_forecast_backtest`** — **each name's** target portfolio fraction
@@ -262,7 +265,8 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   walk-forward window construction, daily-ETL sentiment-history accumulation,
   per-stock target fraction (6% floor) + independent-name rebalance, backtest
   final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
-  underlying-dominance leverage trim, forecast book-limits (cash/holdings caps).
+  underlying-dominance leverage trim, €500 min-trade skip (guardrails + forecast),
+  forecast book-limits (cash/holdings caps).
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button

@@ -37,6 +37,7 @@ MIN_NAME_WEIGHT: float = 0.06  # floor: never de-risk a name below this (held as
 MAX_CASH: float = 0.70  # cash must stay below this (implied by 5 names x MIN_NAME_WEIGHT)
 TRIM_FRACTION: float = 0.03  # trim 3% of portfolio value
 MAX_DAILY_SELL: float = 0.10  # each sell < 10% of portfolio/day
+MIN_TRADE_EUR: float = 500.0  # never buy or sell an order smaller than this
 MAX_DRAWDOWN: float = 0.20  # de-risk to cash beyond this drawdown
 CRISIS_REVERT_DAYS: int = 60  # ~2 months to return to base case
 

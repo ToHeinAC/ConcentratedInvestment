@@ -126,7 +126,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   and drawdown de-risk (>20%→cash, but **never below the 6% `MIN_NAME_WEIGHT` floor** —
   the floor is underlying-only, and across 5 names keeps cash < 70% / `MAX_CASH`) all shed
   the **riskiest tier first** (3x→2x→stock) via the shared `sell_riskiest_first` (built on
-  `state.sell_tier`), within a 10%/day sell cap; `apply_guardrails()` runs them per day
+  `state.sell_tier`), within a 10%/day sell cap and an order minimum of `MIN_TRADE_EUR`
+  (€500 — gated in `sell_riskiest_first`, so trivial orders, incl. the tiny daily
+  dominance micro-trims, are skipped); `apply_guardrails()` runs them per day
   (de-risk, dominance, trim). (The routine confidence-rebalance in
   `backtest.engine` sells pro-rata instead — grading it cost ~5pp; IMPLEMENTATION §5c.) (A vol-aware leverage throttle was
   evaluated here and dropped — walk-forward showed it hurt; see IMPLEMENTATION §5c.)

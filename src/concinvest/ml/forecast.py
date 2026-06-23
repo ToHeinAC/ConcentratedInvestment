@@ -85,17 +85,19 @@ def apply_book_limits(
     """Cap each action by the live book (Story.md: buy only with cash on hand, sell only
     from open positions). A buy is clamped to the *remaining* cash (decremented as buys
     are funded); a sell is clamped to the value held in that name's leverage tier.
-    Actions that can't be funded are dropped. Applied after the sentiment overlay."""
+    Actions that can't be funded — or that fall below ``MIN_TRADE_EUR`` after capping
+    (Story.md: no order < €500) — are dropped. Applied after the sentiment overlay."""
     remaining = cash
     out: list[Forecast] = []
     for fc in forecasts:
         if fc.action == "buy":
             amount = min(fc.amount_eur, remaining)
-            remaining -= amount
         else:
             amount = min(fc.amount_eur, held.get((fc.ticker, fc.leverage), 0.0))
-        if amount <= 0:
+        if amount < config.MIN_TRADE_EUR:  # Story.md: drop orders < €500
             continue
+        if fc.action == "buy":
+            remaining -= amount
         out.append(replace(fc, amount_eur=round(amount, 2)))
     return out
 

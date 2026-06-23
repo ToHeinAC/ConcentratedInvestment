@@ -59,18 +59,18 @@ def test_dividends_pay_underlying_only_net_of_tax():
 
 # --- rules ---------------------------------------------------------------
 def test_trim_fires_above_per_name_cap():
-    st = state.PortfolioState(cash=30.0, high_water=100.0)
-    st.lots = [state.Lot("A", 1, 50.0, 50.0), state.Lot("B", 1, 20.0, 20.0)]
-    total = st.total_value()  # 100; A is 50% > 33%, B is 20% < 33%
+    st = state.PortfolioState(cash=30_000.0, high_water=100_000.0)
+    st.lots = [state.Lot("A", 1, 50_000.0, 50_000.0), state.Lot("B", 1, 20_000.0, 20_000.0)]
+    total = st.total_value()  # 100k; A is 50% > 33%, B is 20% < 33%
     trades = rules.trim_overweight(st)
     assert len(trades) == 1 and trades[0].ticker == "A"
-    assert abs(trades[0].amount_eur - config.TRIM_FRACTION * total) < 1e-6  # 3% of 100
+    assert abs(trades[0].amount_eur - config.TRIM_FRACTION * total) < 1e-6  # 3% of 100k
 
 
 def test_trim_sheds_riskiest_tier_first():
-    st = state.PortfolioState(cash=0.0, high_water=100.0)
-    # A is 40% (>33%): stock 30 + 3x 10; the trim should come out of the 3x first.
-    st.lots = [state.Lot("A", 1, 30.0, 30.0), state.Lot("A", 3, 10.0, 10.0)]
+    st = state.PortfolioState(cash=0.0, high_water=100_000.0)
+    # A is 40% (>33%): stock 30k + 3x 10k; the trim should come out of the 3x first.
+    st.lots = [state.Lot("A", 1, 30_000.0, 30_000.0), state.Lot("A", 3, 10_000.0, 10_000.0)]
     trades = rules.trim_overweight(st)
     assert trades[0].tier == 3
 
@@ -81,18 +81,18 @@ def test_no_trim_when_balanced():
 
 
 def test_drawdown_derisk_caps_each_sell_at_ten_percent():
-    st = state.PortfolioState(cash=0.0, high_water=100.0)
-    st.lots = [state.Lot("A", 1, 75.0, 75.0)]  # now 75 after a 25% drawdown
+    st = state.PortfolioState(cash=0.0, high_water=100_000.0)
+    st.lots = [state.Lot("A", 1, 75_000.0, 75_000.0)]  # now 75k after a 25% drawdown
     trades = rules.drawdown_derisk(st)
     assert len(trades) == 1
-    # Single sell capped at 10% of portfolio value (75), so 7.5 sold.
-    assert abs(trades[0].amount_eur - 7.5) < 1e-6
+    # Single sell capped at 10% of portfolio value (75k), so 7.5k sold.
+    assert abs(trades[0].amount_eur - 7_500.0) < 1e-6
     assert st.cash > 0.0
 
 
 def test_no_derisk_within_threshold():
-    st = state.PortfolioState(cash=0.0, high_water=100.0)
-    st.lots = [state.Lot("A", 1, 90.0, 90.0)]  # 10% drawdown < 20%
+    st = state.PortfolioState(cash=0.0, high_water=100_000.0)
+    st.lots = [state.Lot("A", 1, 90_000.0, 90_000.0)]  # 10% drawdown < 20%
     assert rules.drawdown_derisk(st) == []
 
 
@@ -106,36 +106,38 @@ def test_sell_tier_sells_only_that_tier():
 
 
 def test_drawdown_derisk_sells_riskiest_tier_first():
-    st = state.PortfolioState(cash=0.0, high_water=100.0)
-    st.lots = [state.Lot("A", 1, 30.0, 30.0), state.Lot("A", 3, 45.0, 45.0)]  # 25% drawdown
+    st = state.PortfolioState(cash=0.0, high_water=100_000.0)
+    st.lots = [state.Lot("A", 1, 30_000.0, 30_000.0),
+               state.Lot("A", 3, 45_000.0, 45_000.0)]  # 25% drawdown
     trades = rules.drawdown_derisk(st)
     assert trades[0].tier == 3  # 3x cut before stock
-    # First sell capped at 10% of portfolio (75) = 7.5, taken from the 3x lot.
-    assert abs(trades[0].amount_eur - 7.5) < 1e-6
+    # First sell capped at 10% of portfolio (75k) = 7.5k, taken from the 3x lot.
+    assert abs(trades[0].amount_eur - 7_500.0) < 1e-6
 
 
 def test_drawdown_derisk_respects_min_name_floor():
-    st = state.PortfolioState(cash=0.0, high_water=140.0)
-    # total=100 (28% drawdown). A sits near the 6% floor; the floor (not the 10%/day cap)
-    # binds for it, so A is sold down to exactly 6% and no further.
-    st.lots = [state.Lot("A", 1, 8.0, 8.0)] + [state.Lot(c, 1, 23.0, 23.0) for c in "BCDE"]
+    st = state.PortfolioState(cash=0.0, high_water=140_000.0)
+    # total=100k (28% drawdown). A sits near the 6% floor; the floor (not the 10%/day
+    # cap) binds for it, so A is sold down to exactly 6% and no further.
+    st.lots = ([state.Lot("A", 1, 8_000.0, 8_000.0)]
+               + [state.Lot(c, 1, 23_000.0, 23_000.0) for c in "BCDE"])
     rules.drawdown_derisk(st)
     for c in "ABCDE":
-        assert st.name_value(c) >= config.MIN_NAME_WEIGHT * 100.0 - 1e-6  # >= 6% floor
-    assert abs(st.name_value("A") - config.MIN_NAME_WEIGHT * 100.0) < 1e-6  # floored at 6%
+        assert st.name_value(c) >= config.MIN_NAME_WEIGHT * 100_000.0 - 1e-6  # >= 6% floor
+    assert abs(st.name_value("A") - config.MIN_NAME_WEIGHT * 100_000.0) < 1e-6  # floored 6%
     # 5 names x 6% floor => at least 30% invested => cash stays < 70% (Story.md).
-    assert st.cash <= config.MAX_CASH * 100.0 + 1e-6
+    assert st.cash <= config.MAX_CASH * 100_000.0 + 1e-6
 
 
 # --- underlying dominance (underlying >= 2x + 3x) -------------------------
 def test_enforce_underlying_dominance_trims_leverage_riskiest_first():
-    st = state.PortfolioState(cash=0.0, high_water=100.0)
-    # underlying 10 < leveraged (2x 5 + 3x 15 = 20); excess 10, day-capped at 10% of 30.
-    st.lots = [state.Lot("A", 1, 10.0, 10.0), state.Lot("A", 2, 5.0, 5.0),
-               state.Lot("A", 3, 15.0, 15.0)]
+    st = state.PortfolioState(cash=0.0, high_water=100_000.0)
+    # underlying 10k < leveraged (2x 5k + 3x 15k = 20k); excess 10k, capped at 10% of 30k.
+    st.lots = [state.Lot("A", 1, 10_000.0, 10_000.0), state.Lot("A", 2, 5_000.0, 5_000.0),
+               state.Lot("A", 3, 15_000.0, 15_000.0)]
     trades = rules.enforce_underlying_dominance(st)
     assert trades[0].tier == 3  # riskiest tier shed first
-    assert abs(trades[0].amount_eur - 3.0) < 1e-6  # capped at 10%/day of total (30)
+    assert abs(trades[0].amount_eur - 3_000.0) < 1e-6  # capped at 10%/day of total (30k)
 
 
 def test_no_dominance_trim_in_base_case():
@@ -143,3 +145,11 @@ def test_no_dominance_trim_in_base_case():
     # Base case is 9% underlying == 9% leveraged per name -> exactly on the boundary,
     # so dominance holds (excess == 0, no trim) until an up-move tips leverage ahead.
     assert rules.enforce_underlying_dominance(st) == []
+
+
+def test_orders_below_min_trade_are_skipped():
+    st = state.PortfolioState(cash=0.0, high_water=100_000.0)
+    # underlying 10k vs 3x 10.3k -> excess 300 € (< MIN_TRADE_EUR): no micro-trim fires.
+    st.lots = [state.Lot("A", 1, 10_000.0, 10_000.0),
+               state.Lot("A", 3, 10_300.0, 10_300.0)]
+    assert rules.enforce_underlying_dominance(st) == []  # 300 € order suppressed

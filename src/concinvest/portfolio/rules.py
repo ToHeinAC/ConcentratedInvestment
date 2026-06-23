@@ -53,7 +53,12 @@ def sell_riskiest_first(
     """Sell up to ``budget`` EUR of ``ticker`` from the **riskiest tier first**
     (3x → 2x → stock), each clamped to holdings. The most damaging leverage is shed
     before the underlying — so a crash sheds 3x first, and an upstreak trim also comes
-    out of the leveraged tiers first. Returns one dated-less ``Trade`` per tier sold."""
+    out of the leveraged tiers first. Returns one dated-less ``Trade`` per tier sold.
+
+    Orders below ``MIN_TRADE_EUR`` are skipped entirely (Story.md: no trade < €500),
+    which also suppresses the tiny daily underlying-dominance micro-trims."""
+    if budget < config.MIN_TRADE_EUR:
+        return []
     trades: list[Trade] = []
     for tier in (3, 2, 1):
         if budget <= 0:
