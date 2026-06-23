@@ -61,9 +61,11 @@ config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 (Table 2), `cross_asset` (Table 3). Raw OHLCV kept separate from derived features.
 See [`docs/SCHEMA.md`](docs/SCHEMA.md).
 
-**Model contract:** `ml.dataset.FEATURE_COLS` = technical + cross-asset + sentiment
-placeholders + action encoding (`is_sell`, `leverage`). Sentiment is neutral over
-history (no historical news feed) and filled live at forecast time.
+**Model contract:** `ml.dataset.FEATURE_COLS` = technical + cross-asset + **momentum
+lags** (each of those carried at `_lag{3,10,30,100}` trading days back) + sentiment
+placeholders + action encoding (`is_sell`, `leverage`). Lags give the trees recent
+trajectory (strictly past data — no leakage); low-importance ones are pruned. Sentiment
+is neutral over history (no historical news feed) and filled live at forecast time.
 
 ## 5. Phase 1 design notes
 
@@ -165,6 +167,14 @@ history (no historical news feed) and filled live at forecast time.
   trim fires often, but the heavier base leverage more than offsets it — the basket's
   edge is leverage in up-markets, §5c Lever-1). Numbers vary run-to-run with the
   synthetic sample.
+- **Momentum lags (current)** — each technical + cross-asset feature is now also carried
+  at `_lag{3,10,30,100}` (its value that many trading days back), so the trees see recent
+  trajectory rather than only the point-in-time level. Lags are strictly past data (no
+  leakage); the leading edge fills to 0; low-importance lags are pruned by the existing
+  `MIN_IMPORTANCE` step. Raw CV ROC-AUC is ~flat (0.558 vs 0.564), but the walk-forward
+  improved to **75% (3/4), mean +14.6%** (from +11.6%), mostly by sharpening the 2022-23
+  rotation (+42.8 → +55.4) and enabling per-name **sell** signals. Part of the lift is
+  within run-to-run noise; the win rate held at 75%.
 
 ## 5d. Phase 4 design notes (in progress)
 

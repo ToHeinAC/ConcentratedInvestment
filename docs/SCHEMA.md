@@ -80,6 +80,10 @@ column contract is `ml.dataset.FEATURE_COLS`:
   sma50_sma200_ratio, volume_sma20_ratio`
 - **Cross-asset:** `vix_level, vix_sma20_ratio, vvix_level, gold_oil_ratio,
   copper_gold_ratio, yield_10y, yield_spread_10y_5y`
+- **Momentum lags:** each technical + cross-asset feature also carried at `_lag3`,
+  `_lag10`, `_lag30`, `_lag100` (its value that many trading days back) so the trees
+  see recent trajectory, not just the point-in-time level. Strictly past data — no
+  forward leakage; leading edge fills to 0.
 - **Sentiment:** `news_sentiment_score, put_call_ratio` (neutral defaults over
   history; live values at forecast time)
 - **Action encoding:** `is_sell, leverage`

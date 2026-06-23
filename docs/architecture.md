@@ -80,9 +80,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 
 ### `ml/`
 - **`dataset.py`** — `FEATURE_COLS` is the model contract (technical + cross-asset +
-  sentiment placeholders + action encoding). `build_feature_panel()` joins per-stock
-  technicals with date-aligned cross-asset features into a `(date, ticker)` MultiIndex
-  panel. `generate_dataset()` samples `n` datapoints (half buys / half sells; 100k is
+  **momentum lags** of those at `_lag{3,10,30,100}` + sentiment placeholders + action
+  encoding). `build_feature_panel()` joins per-stock technicals with date-aligned
+  cross-asset features into a `(date, ticker)` MultiIndex panel, then appends each base
+  feature's lagged values (per-ticker `shift`, leading edge → 0; strictly past data, no
+  leakage). `generate_dataset()` samples `n` datapoints (half buys / half sells; 100k is
   the Story.md target); each is a market snapshot plus `is_sell`/`leverage`; the label
   is "profitable action" from a forward-return horizon (buy good if price rose, sell
   good if it fell). Rows are **returned sorted by snapshot date** (DatetimeIndex) so

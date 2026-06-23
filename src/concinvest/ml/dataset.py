@@ -41,7 +41,16 @@ CROSS_FEATURES = [
 SENTIMENT_FEATURES = ["news_sentiment_score", "put_call_ratio"]
 ACTION_FEATURES = ["is_sell", "leverage"]
 
-FEATURE_COLS = TECH_FEATURES + CROSS_FEATURES + SENTIMENT_FEATURES + ACTION_FEATURES
+# Momentum context: carry each technical/cross-asset feature's value from a few trading
+# days back (3/10/30/100) so the trees see its recent trajectory, not just the
+# point-in-time level. Lags are strictly past data — no forward leakage.
+LAG_HORIZONS = (3, 10, 30, 100)
+LAGGED_BASE = TECH_FEATURES + CROSS_FEATURES
+LAG_FEATURES = [f"{c}_lag{h}" for c in LAGGED_BASE for h in LAG_HORIZONS]
+
+FEATURE_COLS = (
+    TECH_FEATURES + CROSS_FEATURES + LAG_FEATURES + SENTIMENT_FEATURES + ACTION_FEATURES
+)
 
 
 def build_feature_panel(
@@ -60,7 +69,13 @@ def build_feature_panel(
     for ticker, df in market.items():
         d = df.copy()
         d.index = pd.to_datetime(d.index)
-        d = d.join(cross, how="left")
+        d = d.sort_index().join(cross, how="left")
+        # Momentum lags: each base feature's value h trading days back (per ticker,
+        # date-sorted). Leading edge (first h rows) is NaN -> filled to 0 downstream.
+        for c in LAGGED_BASE:
+            if c in d.columns:
+                for h in LAG_HORIZONS:
+                    d[f"{c}_lag{h}"] = d[c].shift(h)
         # Sentiment placeholders: neutral over history (no historical news feed).
         d["news_sentiment_score"] = 0.0
         d["put_call_ratio"] = np.nan
@@ -121,7 +136,10 @@ def generate_dataset(
         # Buy is "good" if price rose; sell (exit) is "good" if price fell.
         label = int(fwd_return > 0) if is_sell == 0 else int(fwd_return < 0)
 
-        record = {c: float(feat.get(c, np.nan)) for c in TECH_FEATURES + CROSS_FEATURES}
+        record = {
+            c: float(feat.get(c, np.nan))
+            for c in TECH_FEATURES + CROSS_FEATURES + LAG_FEATURES
+        }
         record["news_sentiment_score"] = 0.0
         record["put_call_ratio"] = 0.0  # neutral default over history
         record["is_sell"] = is_sell
