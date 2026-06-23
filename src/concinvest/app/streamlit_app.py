@@ -97,7 +97,8 @@ def _load(n_dataset: int, with_sentiment: bool):
         "market": res.market,
         "nasdaq": res.nasdaq,
         "trades": _trades_to_frame(res.backtest.trades),
-        "positions": _state_to_frame(res.backtest.final_state),
+        # getattr: tolerate a stale hot-reloaded engine without final_state.
+        "positions": _state_to_frame(getattr(res.backtest, "final_state", None)),
     }
 
 
