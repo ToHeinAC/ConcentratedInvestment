@@ -302,15 +302,40 @@ def _signal_bar(index, dates) -> pd.DatetimeIndex:
     return idx[pos]
 
 
-def _render_strategy(data: dict) -> None:
-    """Third tab: per-asset buy/sell events (with tier) on the price curve, NASDAQ below."""
+_TIER_COLOR = {"stock": "#1f77b4", "2x": "#ff7f0e", "3x": "#d62728"}
+
+
+def _add_markers(fig, row: int, line: pd.Series, ev, size: int) -> None:
+    """Add buy/sell markers on ``line`` (subplot ``row``) for trade rows ``ev`` (columns
+    date/action/position/amount_eur), drawn on the signal day (T-1)."""
     import plotly.graph_objects as go
 
+    if ev is None or ev.empty:
+        return
+    for action, symbol, color in [("buy", "triangle-up", "green"),
+                                  ("sell", "triangle-down", "red")]:
+        rows = ev[ev["action"] == action]
+        if rows.empty:
+            continue
+        sig = _signal_bar(line.index, rows["date"])
+        fig.add_trace(go.Scatter(
+            x=sig, y=_markers_at(line, sig).values, mode="markers", showlegend=False,
+            marker={"symbol": symbol, "color": color, "size": size,
+                    "line": {"width": 1, "color": "white"}},
+            hovertext=[f"{action} {p} €{a:,.0f}"
+                       for p, a in zip(rows["position"], rows["amount_eur"])],
+        ), row=row, col=1)
+
+
+def _render_strategy(data: dict) -> None:
+    """Third tab: price, per-tier balances, and NASDAQ for one asset stacked on a
+    **shared x-axis**, with buy/sell signals (drawn on the decision day, T-1)."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
     st.subheader("Strategy per asset")
-    stock = st.selectbox(
-        "Asset", tickers.STOCKS,
-        format_func=lambda t: f"{t} — {tickers.NAMES.get(t, t)}",
-    )
+    stock = st.selectbox("Asset", tickers.STOCKS,
+                         format_func=lambda t: f"{t} — {tickers.NAMES.get(t, t)}")
     window = data["curve"].index
     start, end = window[0], window[-1]
     mkt = data["market"].get(stock)
@@ -324,33 +349,50 @@ def _render_strategy(data: dict) -> None:
     if not tdf.empty:  # derive position from tier (robust to a stale cached frame)
         tdf = tdf.assign(position=tdf["tier"].map(_tier_label))
 
-    fig = go.Figure()
+    tier_curve = data.get("tier_curve")
+    has_tiers = (tier_curve is not None and not tier_curve.empty
+                 and stock in tier_curve.columns.get_level_values("ticker"))
+
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.045,
+        row_heights=[0.4, 0.35, 0.25],
+        subplot_titles=(f"{stock} — price & signals (decision day, T-1)",
+                        f"{stock} — balance per tier (€)",
+                        f"NASDAQ ({config.BENCHMARK_TICKER})"),
+    )
+
+    # Row 1: price + one aggregated marker per (date, action) showing the total €.
     fig.add_trace(go.Scatter(x=price.index, y=price.values, mode="lines",
-                             name=stock, line={"color": "#1f77b4"}))
-    for action, symbol, color in [("buy", "triangle-up", "green"),
-                                  ("sell", "triangle-down", "red")]:
-        ev = tdf[tdf["action"] == action] if not tdf.empty else tdf
-        if not ev.empty:
-            sig = _signal_bar(price.index, ev["date"])  # decision day (T-1)
-            fig.add_trace(go.Scatter(
-                x=sig, y=_markers_at(price, sig).values, mode="markers",
-                name=action, marker={"symbol": symbol, "color": color, "size": 11},
-                hovertext=[f"{action} {pos} €{a:,.0f}"
-                           for pos, a in zip(ev["position"], ev["amount_eur"])],
-            ))
-    fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 30, "b": 0},
-                      title=f"{stock} — price & buy/sell signals (decision day, T-1)")
-    st.plotly_chart(fig, use_container_width=True)
+                             name=stock, line={"color": "#1f77b4"}), row=1, col=1)
+    if not tdf.empty:
+        agg = (tdf.groupby(["date", "action"], as_index=False)["amount_eur"].sum()
+               .assign(position="total"))
+        _add_markers(fig, 1, price, agg, size=11)
 
-    _render_tier_balances(data.get("tier_curve"), stock, start, end, tdf)
+    # Row 2: per-tier balance lines + per-tier markers (actual € for each tier).
+    if has_tiers:
+        sub = tier_curve[stock].loc[start:end]
+        for tier in [t for t in ("stock", "2x", "3x") if t in sub.columns]:
+            line = sub[tier]
+            fig.add_trace(go.Scatter(x=sub.index, y=line.values, mode="lines",
+                                     name=tier, line={"color": _TIER_COLOR.get(tier)}),
+                          row=2, col=1)
+            if not tdf.empty:
+                _add_markers(fig, 2, line, tdf[tdf["position"] == tier], size=9)
 
+    # Row 3: NASDAQ benchmark over the same window.
     nq = _series(data["nasdaq"]).loc[start:end]
-    nfig = go.Figure()
-    nfig.add_trace(go.Scatter(x=nq.index, y=nq.values, mode="lines",
-                              name="NASDAQ", line={"color": "#888"}))
-    nfig.update_layout(height=260, margin={"l": 0, "r": 0, "t": 30, "b": 0},
-                       title=f"{config.BENCHMARK_TICKER} — same window")
-    st.plotly_chart(nfig, use_container_width=True)
+    fig.add_trace(go.Scatter(x=nq.index, y=nq.values, mode="lines",
+                             name=f"NASDAQ ({config.BENCHMARK_TICKER})",
+                             line={"color": "#888"}), row=3, col=1)
+
+    fig.update_xaxes(range=[start, end])  # identical x-axis across all three panels
+    fig.update_yaxes(title_text="€", row=2, col=1)
+    fig.update_layout(height=760, margin={"l": 0, "r": 0, "t": 50, "b": 0},
+                      legend={"orientation": "h", "y": 1.07})
+    st.plotly_chart(fig, use_container_width=True)
+    if not has_tiers:
+        st.info("Per-tier balances unavailable — press **Run / refresh**.")
 
     n = 0 if tdf is None or tdf.empty else len(tdf)
     with st.popover(f"Show buys & sells ({n})", use_container_width=True):
@@ -362,59 +404,10 @@ def _render_strategy(data: dict) -> None:
                                "date": lambda d: d.strftime("%Y-%m-%d")}),
                 width="stretch", hide_index=True,
             )
-            st.caption("**position**: stock/2x/3x for the riskiest-first de-risk and the "
-                       "33% trim; *all (pro-rata)* for the routine rebalance.")
+            st.caption("**position**: the leverage tier (stock / 2x / 3x) traded; each "
+                       "row is the actual € for that tier.")
         else:
             st.write(f"No trades on {stock} over the validation window.")
-
-
-_TIER_COLOR = {"stock": "#1f77b4", "2x": "#ff7f0e", "3x": "#d62728"}
-
-
-def _tier_markers(fig, tier: str, line: pd.Series, tdf) -> None:
-    """Add buy/sell markers (with amounts) onto one tier's balance line. Tier-specific
-    trades land on their tier; aggregate buys / pro-rata sells land on every tier."""
-    import plotly.graph_objects as go
-
-    if tdf is None or tdf.empty:
-        return
-    rel = tdf[tdf["position"].isin([tier, "all (pro-rata)"])]
-    for action, symbol, color in [("buy", "triangle-up", "green"),
-                                  ("sell", "triangle-down", "red")]:
-        ev = rel[rel["action"] == action]
-        if ev.empty:
-            continue
-        sig = _signal_bar(line.index, ev["date"])  # decision day (T-1)
-        fig.add_trace(go.Scatter(
-            x=sig, y=_markers_at(line, sig).values, mode="markers",
-            marker={"symbol": symbol, "color": color, "size": 9,
-                    "line": {"width": 1, "color": "white"}},
-            name=f"{tier} {action}", showlegend=False,
-            hovertext=[f"{action} {p} €{a:,.0f}"
-                       for p, a in zip(ev["position"], ev["amount_eur"])],
-        ))
-
-
-def _render_tier_balances(tier_curve, stock: str, start, end, tdf=None) -> None:
-    """Balance (EUR) evolution of each leverage tier of ``stock``, with buy/sell markers."""
-    import plotly.graph_objects as go
-
-    if (tier_curve is None or tier_curve.empty
-            or stock not in tier_curve.columns.get_level_values("ticker")):
-        st.info("Per-tier balances unavailable — press **Run / refresh**.")
-        return
-    sub = tier_curve[stock].loc[start:end]
-    order = [t for t in ("stock", "2x", "3x") if t in sub.columns]
-    fig = go.Figure()
-    for tier in order:
-        line = sub[tier]
-        fig.add_trace(go.Scatter(x=sub.index, y=line.values, mode="lines",
-                                 name=tier, line={"color": _TIER_COLOR.get(tier)}))
-        _tier_markers(fig, tier, line, tdf)
-    fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 30, "b": 0},
-                      yaxis_title="balance (€)",
-                      title=f"{stock} — balance per tier with buy/sell signals (decision day, T-1)")
-    st.plotly_chart(fig, use_container_width=True)
 
 
 if __name__ == "__main__":

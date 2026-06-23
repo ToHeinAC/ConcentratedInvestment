@@ -130,8 +130,11 @@ def test_rebalance_names_handles_each_name_independently():
     targets = {"A": engine._target_name_fraction(0.25),
                "B": engine._target_name_fraction(0.5)}
     trades = engine._rebalance_names_to_target(st, targets, ["A", "B"])
-    assert [t.ticker for t in trades] == ["A"]  # only the bearish name is trimmed
-    assert trades[0].action == "sell"
+    assert trades and {t.ticker for t in trades} == {"A"}  # only the bearish name
+    assert all(t.action == "sell" for t in trades)
+    # Pro-rata sell is logged per tier with an actual € amount each (not one aggregate).
+    assert {t.tier for t in trades} == {1, 2, 3}
+    assert all(t.amount_eur > 0 for t in trades)
 
 
 def test_is_crisis_detects_sharp_drop():

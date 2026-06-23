@@ -228,8 +228,8 @@ def _rebalance_names_to_target(
         # Routine confidence-rebalance sells pro-rata across tiers (keeps the leverage
         # edge in up-markets); tier-graded shedding is reserved for the two de-risking
         # events Story.md names — the crash drawdown and the post-upstreak 33% trim.
-        elif state.sell_name(ticker, move) > 0:
-            trades.append(rules.Trade(ticker, "sell", move))
+        else:
+            trades += _sell_proportional(state, ticker, move)
     return trades
 
 
@@ -245,23 +245,46 @@ def _deploy_name(
     state: pstate.PortfolioState, ticker: str, amount: float
 ) -> list[rules.Trade]:
     """Deploy ``amount`` of cash into one name by the base-case tier split (12/3/3).
-    Returns one aggregate buy ``Trade`` if any cash was actually invested."""
+    Returns one buy ``Trade`` **per funded tier** (each with its actual € invested)."""
     split = config.BASE_PER_NAME_SPLIT
     weight_sum = sum(split.values())
-    invested = 0.0
+    trades: list[rules.Trade] = []
     for tier_name, weight in split.items():
-        invested += state.buy(ticker, rules._TIER_OF[tier_name], amount * weight / weight_sum)
-    return [rules.Trade(ticker, "buy", invested)] if invested > 0 else []
+        tier = rules._TIER_OF[tier_name]
+        invested = state.buy(ticker, tier, amount * weight / weight_sum)
+        if invested > 0:
+            trades.append(rules.Trade(ticker, "buy", invested, tier=tier))
+    return trades
 
 
 def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> list[rules.Trade]:
     """Deploy ``amount`` of cash equally across stocks by the base-case tier split
-    (crisis buy-the-dip). One aggregate buy ``Trade`` per stock actually funded."""
+    (crisis buy-the-dip). One buy ``Trade`` per funded (stock, tier)."""
     per_stock = amount / len(stocks)
     trades: list[rules.Trade] = []
     for ticker in stocks:
         trades += _deploy_name(state, ticker, per_stock)
     return trades
+
+
+def _sell_proportional(
+    state: pstate.PortfolioState, ticker: str, amount: float
+) -> list[rules.Trade]:
+    """Sell ``amount`` EUR of ``ticker`` pro-rata across its tiers (selling logic is
+    unchanged — `state.sell_name`), returning one sell ``Trade`` per tier with the
+    actual € shed from that tier (so the trade log shows real per-tier amounts, not one
+    aggregate 'all (pro-rata)' row)."""
+    name_val = state.name_value(ticker)
+    gross = min(amount, name_val)
+    if gross <= 0:
+        return []
+    frac = gross / name_val
+    by_tier: dict[int, float] = {}
+    for lot in state.lots:
+        if lot.ticker == ticker:
+            by_tier[lot.tier] = by_tier.get(lot.tier, 0.0) + lot.value * frac
+    state.sell_name(ticker, amount)
+    return [rules.Trade(ticker, "sell", v, tier=t) for t, v in sorted(by_tier.items())]
 
 
 def run_forecast_backtest(

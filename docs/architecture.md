@@ -151,8 +151,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   day's underlying dividend yield (`adj_close` minus `close` return) and
   `state.pay_dividends` credits it to the tier-1 lots; `_benchmark_curve` ffills
   interior gaps and bfills a leading NaN (window opening on a benchmark holiday). Every
-  buy/sell (`_deploy`/`_rebalance_names_to_target`/guardrails) is collected,
-  date-stamped, and returned as `BacktestResult.trades` (the Strategy tab's source).
+  buy/sell (`_deploy`/`_rebalance_names_to_target`/guardrails) is collected **per tier**
+  with its actual € (deploys split 12/3/3; the pro-rata rebalance sell via
+  `_sell_proportional`), date-stamped, and returned as `BacktestResult.trades` (the
+  Strategy tab's source); each day's per-`(ticker, tier)` value is `BacktestResult.tier_curve`.
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`
@@ -167,10 +169,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   ticker→name legend popover; a simplified analyst/sentiment summary — rating, news tone,
   target upside), **Forecast & Backtest** (5-field forecast sized to the live book,
   portfolio-vs-NASDAQ curve as cumulative %, feature importances),
-  **Strategy** (per asset: buy/sell markers on the price curve from
-  `BacktestResult.trades`, a per-tier balance-evolution chart from
-  `BacktestResult.tier_curve`, NASDAQ below, and the trade table behind a popover button
-  — interactive Plotly). Cached via `st.cache_data`.
+  **Strategy** (per asset, three panels on a shared x-axis with a legend: price with
+  aggregated buy/sell markers, a per-tier balance-evolution chart from
+  `BacktestResult.tier_curve` with per-tier markers (actual € each), and NASDAQ; the full
+  trade table behind a popover button. Markers drawn on the decision day T-1 — interactive
+  Plotly). Cached via `st.cache_data`.
 - **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
   `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
 
