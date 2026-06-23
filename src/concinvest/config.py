@@ -52,6 +52,13 @@ LEVERAGE_TIERS: tuple[int, ...] = (1, 2, 3)
 # target exposure by more than this, to keep the base case "mostly no trades".
 REBALANCE_BAND: float = 0.10
 
+# Risk lever (Phase 3 tightening) — leverage-aware de-risk: during a confirmed
+# >MAX_DRAWDOWN drawdown, the per-name daily sell (still capped at MAX_DAILY_SELL,
+# Story.md) is drawn from the 3x tier first, then 2x, then stock — cutting the most
+# damaging leverage first. (A vol-aware leverage throttle was evaluated and dropped:
+# the walk-forward showed it cut the strategy's leverage edge and fought the crisis
+# dip-buy, lowering mean outperformance from +5.7% to +3.5%.)
+
 # --- Sentiment -----------------------------------------------------------
 # News-sentiment backend: "vader" (light, default) or "finbert" (transformers,
 # opt-in via the ``sentiment`` extra). FinBERT is loaded lazily on first use.

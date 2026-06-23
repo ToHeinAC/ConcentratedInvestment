@@ -46,7 +46,7 @@ Package `src/concinvest/`. Full detail in [`docs/architecture.md`](docs/architec
 ```
 data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite)
 features/  technical.py · cross_asset.py · sentiment.py (VADER/FinBERT) · analyst.py · options.py
-ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields)
+ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields) · overlay.py (live sentiment tilt)
 portfolio/ state.py (leveraged lots+cash) · tax.py (Abgeltungsteuer) · rules.py (guardrails)
 backtest/  engine.py (forecast-driven + rules-based portfolio) · walkforward.py (multi-window)
 app/       streamlit_app.py · exit_button.py
@@ -132,10 +132,17 @@ history (no historical news feed) and filled live at forecast time.
   recovery within the 2-month window — and underlying dividends plus the
   leading-holiday benchmark fix nudged the last window just ahead of NASDAQ, lifting
   the win rate to 2/4 and mean outperformance to +5.7%.
-- **Open** — "beat NASDAQ" is now a **marginal win on average** (mean +5.7%, but still
-  one window trailing by 11pp). Honest next steps: a basket/leverage review and
-  faster/leverage-aware de-risk for *non-crash* declines (the drawdown cap only
-  nibbles at 10%/day) — not fitting one window.
+- **Risk-lever experiment** — two levers were evaluated to make the win more robust.
+  **Lever 2 (leverage-aware de-risk)** — drawdown de-risk now sells the riskiest tier
+  first (3x → 2x → stock) via `state.sell_tier`, keeping the Story.md 10%/name/day cap;
+  it shipped (mean **+5.5%**, ≈ neutral, better risk hygiene). **Lever 1 (vol-aware
+  leverage throttle)** — shedding 2x/3x when VIX is elevated — was **dropped**: the
+  walk-forward showed it cut the strategy's leverage edge and fought the crisis dip-buy
+  (mean fell to +3.5% at a VIX-28 stress threshold, +2.9% at VIX-20). Lesson: this
+  basket's edge *is* the leverage in up-markets; de-levering on vol is net-negative.
+- **Open** — "beat NASDAQ" is a **marginal win on average** (mean ~+5.5%, one window
+  still trailing 11pp). The honest remaining lever is a **basket/benchmark review**
+  (concentrated value vs a tech-heavy NASDAQ) — not more risk tuning.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -146,8 +153,9 @@ history (no historical news feed) and filled live at forecast time.
 - **`tax.tax_on_sale`** — 25% flat Abgeltungsteuer; realized losses accumulate in a
   carry pool that offsets future gains before tax.
 - **`rules`** — deterministic sell-side guardrails: 33% per-name → trim 3%; 20%
-  drawdown → de-risk toward cash; every sell capped at 10%/day. `apply_guardrails`
-  runs them per day (de-risk, then trim).
+  drawdown → de-risk toward cash (drawing each name's daily sell from the **riskiest
+  tier first**, 3x → 2x → stock, via `state.sell_tier`); every sell capped at 10%/day.
+  `apply_guardrails` runs them per day (de-risk, then trim).
 - **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
   guardrails vs NASDAQ (sell-side only).
 - **`backtest.run_forecast_backtest`** — the book's target equity exposure tracks the
@@ -167,14 +175,23 @@ history (no historical news feed) and filled live at forecast time.
   from `auto_adjust=False`); `state.pay_dividends` credits cash on **tier-1 lots
   only** (Story.md: not the leveraged positions), net of the flat 25% tax. Wired into
   both the rules and forecast backtests.
-- **Open** — faster/leverage-aware de-risk for non-crash declines; basket/leverage
-  review.
+- **Trade log** — `rules.Trade` carries `date`/`tier`; the forecast backtest collects
+  every buy/sell (trims, de-risk, crisis dip-buys, rebalances) into
+  `BacktestResult.trades`. Surfaced in the **History tab** (per-asset markers on the
+  price curve, NASDAQ below, interactive Plotly).
+- **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
+  the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
+  price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
+  leverage tier on crash fear. **Live-only** — these signals have no history, so the
+  overlay is *not* in the backtest/walk-forward. Next step to make them trainable: the
+  Phase 5 cron snapshots `sentiment_analyst` daily to accumulate history.
+- **Open** — basket/benchmark review (the real outperformance lever, §5c).
 
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 48 tests, offline (synthetic fixtures)
+uv run pytest                                   # 57 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
@@ -185,9 +202,11 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   sentiment scaling, SQLite upsert/read roundtrip, additive schema migration, pure
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
-  train + 5-field forecast, backtest curve, portfolio state/tax/guardrails +
-  rules-based & forecast-driven backtests, crisis-drop detection, underlying-only
-  dividends, leading-holiday benchmark gap, walk-forward window construction.
+  train + 5-field forecast, backtest curve, portfolio state/tax/guardrails (incl.
+  tier-targeted `sell_tier` + riskiest-first de-risk) + rules-based & forecast-driven
+  backtests + trade-log recording, crisis-drop detection, underlying-only dividends,
+  leading-holiday benchmark gap, sentiment overlay (tilt/gate/leverage cap),
+  walk-forward window construction.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -198,15 +217,16 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 - **Phase 3** (🔄) — done: time-ordered generator (100k-capable), honest
   date-based train/validate split, TSCV hyperparameter tuning, feature-importance
   pruning, base-case-faithful exposure mapping, walk-forward validation
-  (`concinvest validate`). Remaining: reach validation return > NASDAQ — walk-forward
-  win rate is 25% (1/4), mean −2.3%; high variance with a −20% window where leverage
-  out-ran the de-risk cap. Next is risk control + basket/leverage review (§5c).
-- **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash),
-  `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
-  sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven
-  exposure + re-entry + guardrails + tax + crisis 100%/2-month-revert path + dividends
-  on the underlying), wired into the pipeline. Open follow-ups (not blocking):
-  faster/leverage-aware de-risk, basket/leverage review.
+  (`concinvest validate`), risk-control tightening (Lever 2 riskiest-first de-risk
+  shipped; Lever 1 vol throttle evaluated and dropped — §5c). Walk-forward mean
+  outperformance ~+5.5% but high-variance (one window −11pp). Remaining real lever is a
+  **basket/benchmark review**, not more risk tuning.
+- **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash + tier-targeted
+  `sell_tier`), `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%,
+  <10%/day sell, 20% drawdown→riskiest-tier-first de-risk);
+  `backtest.run_forecast_backtest` (confidence-driven exposure + re-entry + guardrails
+  + tax + crisis 100%/2-month-revert + underlying dividends + trade log), wired into
+  the pipeline; live sentiment overlay (`ml/overlay.py`) on the forecast; History tab.
 - **Phase 5** — correlation/regime UI, `pipeline.fetch_and_store` daily cron, Docker.
 
 ## 8. Conventions

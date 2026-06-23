@@ -86,3 +86,21 @@ def test_no_derisk_within_threshold():
     st = state.PortfolioState(cash=0.0, high_water=100.0)
     st.lots = [state.Lot("A", 1, 90.0, 90.0)]  # 10% drawdown < 20%
     assert rules.drawdown_derisk(st) == []
+
+
+# --- leverage-aware de-risk ----------------------------------------------
+def test_sell_tier_sells_only_that_tier():
+    st = state.PortfolioState(cash=0.0, high_water=300.0)
+    st.lots = [state.Lot("A", 1, 100.0, 100.0), state.Lot("A", 3, 100.0, 100.0)]
+    st.sell_tier("A", 3, 100.0)  # sell the whole 3x lot
+    assert [(lot.tier, lot.value) for lot in st.lots] == [(1, 100.0)]
+    assert abs(st.cash - 100.0) < 1e-9  # no gain (cost==value) -> no tax
+
+
+def test_drawdown_derisk_sells_riskiest_tier_first():
+    st = state.PortfolioState(cash=0.0, high_water=100.0)
+    st.lots = [state.Lot("A", 1, 30.0, 30.0), state.Lot("A", 3, 45.0, 45.0)]  # 25% drawdown
+    trades = rules.drawdown_derisk(st)
+    assert trades[0].tier == 3  # 3x cut before stock
+    # First sell capped at 10% of portfolio (75) = 7.5, taken from the 3x lot.
+    assert abs(trades[0].amount_eur - 7.5) < 1e-6

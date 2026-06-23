@@ -74,7 +74,34 @@ class PortfolioState:
     ) -> float:
         """Sell ``amount_eur`` of market value of ``ticker`` proportionally across its
         lots, realize the gain/loss, pay tax, and credit net proceeds to cash."""
-        lots = [lot for lot in self.lots if lot.ticker == ticker]
+        return self._sell_lots(
+            [lot for lot in self.lots if lot.ticker == ticker], amount_eur, tax_fn
+        )
+
+    def sell_tier(
+        self,
+        ticker: str,
+        tier: int,
+        amount_eur: float,
+        tax_fn: Callable[[float, float], tuple[float, float]] = tax_mod.tax_on_sale,
+    ) -> float:
+        """Sell ``amount_eur`` from one ``tier`` of ``ticker`` only (tier-targeted
+        de-leveraging / riskiest-first de-risk). Same tax + cash semantics as
+        ``sell_name``."""
+        return self._sell_lots(
+            [lot for lot in self.lots if lot.ticker == ticker and lot.tier == tier],
+            amount_eur,
+            tax_fn,
+        )
+
+    def _sell_lots(
+        self,
+        lots: list[Lot],
+        amount_eur: float,
+        tax_fn: Callable[[float, float], tuple[float, float]],
+    ) -> float:
+        """Sell ``amount_eur`` of value proportionally across ``lots``; realize tax,
+        credit net proceeds to cash, and drop emptied lots. Returns net proceeds."""
         name_val = sum(lot.value for lot in lots)
         amount = min(amount_eur, name_val)
         if amount <= 0:

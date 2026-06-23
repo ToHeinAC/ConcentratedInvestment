@@ -6,6 +6,7 @@ from concinvest import config
 from concinvest.backtest import engine
 from concinvest.features import cross_asset
 from concinvest.ml import dataset, forecast, model
+from concinvest.portfolio import state as pstate
 
 
 def _panel_and_prices(synth_market, synth_raw):
@@ -132,6 +133,14 @@ def test_dividend_yields_recover_total_minus_price_return(synth_market):
     assert (divs.drop(columns=[t]).to_numpy() == 0.0).all()
 
 
+def test_deploy_records_buy_trades():
+    st = pstate.PortfolioState(cash=1000.0, high_water=1000.0)
+    trades = engine._deploy(st, 1000.0, ["A", "B"])
+    assert {t.ticker for t in trades} == {"A", "B"}
+    assert all(t.action == "buy" and t.amount_eur > 0 for t in trades)
+    assert st.cash < 1.0  # cash deployed into lots
+
+
 def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=4)
@@ -143,6 +152,9 @@ def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     assert len(res.curve) > 50
     assert (res.curve["portfolio"] > 0).all()
     assert isinstance(res.beats_benchmark, bool)
+    # Trade log: well-formed and dated (recording is unit-tested in _deploy / de-risk).
+    assert isinstance(res.trades, list)
+    assert all(t.date is not None and t.action in {"buy", "sell"} for t in res.trades)
 
 
 def test_backtest_produces_curve(synth_market, synth_raw):

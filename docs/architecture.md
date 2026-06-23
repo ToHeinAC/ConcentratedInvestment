@@ -100,24 +100,32 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`forecast.py`** — `forecast()` enumerates buy/sell × leverage candidates per
   stock, scores them, and keeps the best above `threshold` (else hold). Emits the
   five Story.md fields via the `Forecast` dataclass; `forecasts_to_frame()` tabulates.
+- **`overlay.py`** — live analyst/sentiment overlay on the forecast (**live-only**, not
+  backtested — these signals have no history). `sentiment_tilt` (recommendation mean +
+  EPS-revision momentum + price-vs-target) scales confidence/amount; `risk_gate`
+  (put/call + IV skew) caps the leverage tier on crash fear; `apply_overlay` applies
+  both to the `run_phase1` forecast.
 
 ### `portfolio/` (Phase 4)
 - **`state.py`** — `PortfolioState` (cash + leveraged `Lot`s with cost basis,
   `loss_carry`, `high_water`). `mark()` applies daily constant-leverage returns;
-  `buy()`/`sell_name()` open lots and realize tax-adjusted proceeds;
+  `buy()`/`sell_name()` open lots and realize tax-adjusted proceeds; `sell_tier()`
+  sells one tier only (tier-targeted de-risk) — both route through `_sell_lots`;
   `pay_dividends()` credits cash on tier-1 (underlying) lots only, net of flat tax
   (Story.md: leveraged lots earn no dividend); `build_base_case()` constructs the
   Story.md 90/10 book (per-name 12%/3%/3%).
 - **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a realized-loss carry
   that offsets future gains before tax.
-- **`rules.py`** — deterministic sell-side guardrails returning `Trade`s: per-name
-  trim (33%→3%), drawdown de-risk (>20%→cash), 10%/day sell cap; `apply_guardrails()`
-  runs them per day. The crisis buy-the-dip path lives in `backtest.engine`
-  (`_is_crisis`/`_deploy`); dividends on the underlying are the next increment.
+- **`rules.py`** — deterministic sell-side guardrails returning dated `Trade`s
+  (`ticker, action, amount_eur, tier, date`): per-name trim (33%→3%), drawdown de-risk
+  (>20%→cash, **riskiest tier first** 3x→2x→stock via `state.sell_tier`), 10%/day sell
+  cap; `apply_guardrails()` runs them per day. (A vol-aware leverage throttle was
+  evaluated here and dropped — walk-forward showed it hurt; see IMPLEMENTATION §5c.)
+  The crisis buy-the-dip path lives in `backtest.engine` (`_is_crisis`/`_deploy`).
 
 ### `backtest/`
 - **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
-  portfolio/benchmark returns + `beats_benchmark`): `run_backtest()` (Phase 1
+  portfolio/benchmark returns + `beats_benchmark` + `trades`): `run_backtest()` (Phase 1
   confidence-scaled equal-weight basket), `run_rules_backtest()` (base-case leveraged
   book under guardrails, sell-side only), and `run_forecast_backtest()` — **the
   pipeline's backtest** — the leveraged book whose target equity exposure follows
@@ -130,7 +138,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   rule). The per-name trim still fires in crisis. `_dividend_yields` recovers each
   day's underlying dividend yield (`adj_close` minus `close` return) and
   `state.pay_dividends` credits it to the tier-1 lots; `_benchmark_curve` ffills
-  interior gaps and bfills a leading NaN (window opening on a benchmark holiday).
+  interior gaps and bfills a leading NaN (window opening on a benchmark holiday). Every
+  buy/sell (`_deploy`/`_rebalance_to_target`/guardrails) is collected, date-stamped,
+  and returned as `BacktestResult.trades` (the History tab's source).
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`
@@ -138,9 +148,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `concinvest validate`; the honest read vs any single-year backtest.
 
 ### `app/`
-- **`streamlit_app.py`** — UI: forecast table, portfolio-vs-NASDAQ curve, live
-  analyst/sentiment table, feature importances, cross-asset correlation matrix.
-  Cached via `st.cache_data`.
+- **`streamlit_app.py`** — UI in three tabs: **Current market** (positions, cross-asset
+  correlation, live analyst/sentiment), **Forecast & Backtest** (5-field forecast,
+  portfolio-vs-NASDAQ curve, feature importances), **History** (per-asset buy/sell
+  markers on the price curve from `BacktestResult.trades`, NASDAQ below — interactive
+  Plotly). Cached via `st.cache_data`.
 - **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
   `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
 

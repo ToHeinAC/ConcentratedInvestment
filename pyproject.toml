@@ -12,6 +12,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "streamlit>=1.36",
     "matplotlib>=3.8",
+    "plotly>=5.22",
     "requests>=2.32",
     "beautifulsoup4>=4.12",
     "nltk>=3.9",

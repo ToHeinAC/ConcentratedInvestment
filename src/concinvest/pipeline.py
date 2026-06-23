@@ -16,7 +16,7 @@ from .backtest.engine import BacktestResult, run_forecast_backtest
 from .backtest.walkforward import WalkForwardResult, walk_forward_validate
 from .data import fetch, store, tickers
 from .features import analyst, cross_asset, technical
-from .ml import dataset, forecast, model
+from .ml import dataset, forecast, model, overlay
 from .ml.forecast import Forecast
 
 
@@ -29,6 +29,7 @@ class Phase1Result:
     backtest: BacktestResult
     correlation: pd.DataFrame
     sentiment: pd.DataFrame  # live analyst/sentiment rows (empty if disabled)
+    nasdaq: pd.Series  # raw NASDAQ close (for the History tab)
 
 
 def fetch_and_store(
@@ -137,11 +138,14 @@ def run_phase1(
     X_tr, y_tr, _, _ = dataset.train_validate_split(X, y)
     trained = (model.tune_and_train(X_tr, y_tr) if tune else model.train(X_tr, y_tr))
 
-    # Live analyst/sentiment, then forecast from the latest snapshots.
+    # Live analyst/sentiment, then forecast from the latest snapshots. The sentiment
+    # overlay tilts the live forecast only (these signals have no history to backtest).
     sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
                     if with_sentiment else pd.DataFrame())
     snaps = _live_snapshots(panel, sentiment_df)
     forecasts = forecast.forecast(trained, snaps)
+    latest_close = {t: float(df["close"].iloc[-1]) for t, df in market.items()}
+    forecasts = overlay.apply_overlay(forecasts, sentiment_df, latest_close)
 
     # Rules + forecast backtest over the validation window (last VALIDATION_YEARS).
     val_start = (pd.Timestamp(market[next(iter(market))].index[-1])
@@ -155,7 +159,7 @@ def run_phase1(
     return Phase1Result(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,
-        sentiment=sentiment_df,
+        sentiment=sentiment_df, nasdaq=nasdaq,
     )
 
 

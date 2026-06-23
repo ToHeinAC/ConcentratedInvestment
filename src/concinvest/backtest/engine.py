@@ -10,7 +10,7 @@ Full allocation/risk/leverage/tax logic (Story.md) lands in Phase 4.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -26,6 +26,7 @@ class BacktestResult:
     curve: pd.DataFrame  # index=date, columns: portfolio, benchmark
     portfolio_return: float
     benchmark_return: float
+    trades: list[rules.Trade] = field(default_factory=list)  # forecast backtest only
 
     @property
     def outperformance(self) -> float:
@@ -170,26 +171,32 @@ def _target_exposure(confidence: float) -> float:
     return config.BASE_STOCK_ALLOCATION * min(1.0, confidence / _NEUTRAL_CONF)
 
 
-def _rebalance_to_target(state: pstate.PortfolioState, target_frac: float, stocks: list[str]) -> None:
+def _rebalance_to_target(
+    state: pstate.PortfolioState, target_frac: float, stocks: list[str]
+) -> list[rules.Trade]:
     """Nudge invested fraction toward ``target_frac`` within the daily move cap.
 
     Buys deploy toward the base-case per-name weights; sells reduce names
-    proportionally. A dead-band keeps the book mostly static (base case).
+    proportionally. A dead-band keeps the book mostly static (base case). Returns the
+    trades performed.
     """
     total = state.total_value()
     if total <= 0:
-        return
+        return []
     invested_frac = (total - state.cash) / total
     dev = target_frac - invested_frac
     if abs(dev) < config.REBALANCE_BAND:
-        return
+        return []
     move = min(abs(dev), config.MAX_DAILY_SELL) * total  # cap daily turnover
     if dev > 0:
-        _deploy(state, move, stocks)
-    else:
-        for ticker in stocks:
-            cap = config.MAX_DAILY_SELL * state.total_value()
-            state.sell_name(ticker, min(move / len(stocks), cap))
+        return _deploy(state, move, stocks)
+    trades: list[rules.Trade] = []
+    for ticker in stocks:
+        cap = config.MAX_DAILY_SELL * state.total_value()
+        gross = min(move / len(stocks), cap)
+        if state.sell_name(ticker, gross) > 0:
+            trades.append(rules.Trade(ticker, "sell", gross))
+    return trades
 
 
 def _is_crisis(basket_ret: pd.Series, i: int) -> bool:
@@ -200,15 +207,20 @@ def _is_crisis(basket_ret: pd.Series, i: int) -> bool:
     return float((1.0 + window).prod() - 1.0) <= -config.CRISIS_DROP
 
 
-def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> None:
-    """Deploy ``amount`` of cash across stocks by the base-case tier split."""
+def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> list[rules.Trade]:
+    """Deploy ``amount`` of cash across stocks by the base-case tier split. Returns one
+    aggregate buy ``Trade`` per stock actually funded."""
     split = config.BASE_PER_NAME_SPLIT
-    tier_of = {"stock": 1, "2x": 2, "3x": 3}
     weight_sum = sum(split.values())
     per_stock = amount / len(stocks)
+    trades: list[rules.Trade] = []
     for ticker in stocks:
+        invested = 0.0
         for tier_name, weight in split.items():
-            state.buy(ticker, tier_of[tier_name], per_stock * weight / weight_sum)
+            invested += state.buy(ticker, rules._TIER_OF[tier_name], per_stock * weight / weight_sum)
+        if invested > 0:
+            trades.append(rules.Trade(ticker, "buy", invested))
+    return trades
 
 
 def run_forecast_backtest(
@@ -239,20 +251,26 @@ def run_forecast_backtest(
     state = pstate.build_base_case(capital, stocks=stocks)
     crisis_day: int | None = None
     values: list[float] = []
+    trades: list[rules.Trade] = []
     for i, (date, row) in enumerate(rets.iterrows()):
         state.mark(row.to_dict())
         state.pay_dividends(divs.loc[date].to_dict() if date in divs.index else {})
-        rules.trim_overweight(state)  # per-name cap applies even in crisis
+        day = rules.trim_overweight(state)  # per-name cap applies even in crisis
         in_crisis = crisis_day is not None and (i - crisis_day) < config.CRISIS_REVERT_DAYS
         if not in_crisis:
             crisis_day = None
-            rules.drawdown_derisk(state)
+            day += rules.drawdown_derisk(state)  # riskiest-tier-first de-risk
             if _is_crisis(basket_ret, i):
                 crisis_day = i
-                _deploy(state, state.cash, stocks)  # buy the dip: go ~100% invested
+                day += _deploy(state, state.cash, stocks)  # buy the dip
             else:
-                _rebalance_to_target(state, _target_exposure(float(exposure.get(date, 1.0))), stocks)
+                day += _rebalance_to_target(
+                    state, _target_exposure(float(exposure.get(date, 1.0))), stocks
+                )
         # During crisis: stay fully invested (no de-risk, no rebalance toward cash).
+        for t in day:
+            t.date = date
+        trades.extend(day)
         values.append(state.total_value())
 
     portfolio = pd.Series(values, index=dates)
@@ -260,4 +278,4 @@ def run_forecast_backtest(
     curve = pd.DataFrame({"portfolio": portfolio, "benchmark": benchmark}).dropna()
     p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
     b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
-    return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret)
+    return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret, trades=trades)
