@@ -271,11 +271,18 @@ def _render_forecast(data: dict) -> None:
     st.subheader("Feature importance")
     import plotly.graph_objects as go
 
-    imp = pd.Series(data["importance"]).sort_values(ascending=False)
-    fig = go.Figure(go.Bar(x=list(imp.index), y=imp.values, marker_color="#1f77b4"))
-    fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 10, "b": 0},
-                      xaxis={"categoryorder": "total descending"},
-                      yaxis_title="importance")
+    imp = (pd.Series(data["importance"])
+           .drop(labels=["is_sell"], errors="ignore")  # action flag, not a market signal
+           .sort_values(ascending=False))
+    show_all = st.toggle("Show all features", value=False)
+    shown = imp if show_all else imp.head(10)
+    # Horizontal bars: x = importance, y = feature label, highest at the top.
+    shown = shown.sort_values(ascending=True)
+    fig = go.Figure(go.Bar(x=shown.values, y=list(shown.index), orientation="h",
+                           marker_color="#1f77b4"))
+    fig.update_layout(height=max(320, 22 * len(shown)),
+                      margin={"l": 0, "r": 0, "t": 10, "b": 0},
+                      xaxis_title="importance")
     st.plotly_chart(fig, width="stretch")
 
 
