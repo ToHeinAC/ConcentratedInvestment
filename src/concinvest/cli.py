@@ -21,6 +21,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p_update = sub.add_parser("update", help="Fetch core tickers and store features (daily ETL)")
     p_update.add_argument("--start", default=str(config.START_DATE))
+    p_update.add_argument("--sentiment", action="store_true",
+                          help="also snapshot dated analyst/sentiment rows (daily cron)")
 
     p_run = sub.add_parser("run", help="Run the full Phase 1 slice and print results")
     p_run.add_argument("--start", default=str(config.START_DATE))
@@ -51,6 +53,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "update":
+        if args.sentiment:
+            from .pipeline import daily_etl
+
+            s = daily_etl(start=args.start)
+            print(f"daily ETL {s['as_of']}: {s['tickers']} tickers, {s['stocks']} "
+                  f"stocks, {s['cross_rows']} cross rows, {s['sentiment_rows']} "
+                  f"sentiment rows; db: {config.DB_PATH}")
+            return 0
         from .pipeline import fetch_and_store
 
         market, cross, raw = fetch_and_store(tickers.ALL_TICKERS, start=args.start)

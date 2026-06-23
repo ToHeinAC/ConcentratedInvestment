@@ -35,9 +35,9 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 | **0** | Scaffold: package, config, tickers, CLI, tests, Docker, exit button | ✅ done |
 | **1** | Thin end-to-end slice (all layers, sentiment-aware) | ✅ done |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
-| **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | 🔄 in progress |
+| **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | ✅ done (marginal win accepted) |
 | **4** | Full rules engine (allocation/risk/leverage/drawdown/trim/crisis) + German tax + dividends, in backtest | ✅ done |
-| **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | ⏳ planned |
+| **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | 🔄 in progress (cron + sentiment snapshot done) |
 
 ## 4. Architecture (implemented)
 
@@ -140,9 +140,10 @@ history (no historical news feed) and filled live at forecast time.
   walk-forward showed it cut the strategy's leverage edge and fought the crisis dip-buy
   (mean fell to +3.5% at a VIX-28 stress threshold, +2.9% at VIX-20). Lesson: this
   basket's edge *is* the leverage in up-markets; de-levering on vol is net-negative.
-- **Open** — "beat NASDAQ" is a **marginal win on average** (mean ~+5.5%, one window
-  still trailing 11pp). The honest remaining lever is a **basket/benchmark review**
-  (concentrated value vs a tech-heavy NASDAQ) — not more risk tuning.
+- **Closed** — "beat NASDAQ" is a **marginal win on average** (mean ~+5.5%, one window
+  still trailing 11pp), accepted as the Phase 3 outcome. The honest remaining lever is a
+  **basket/benchmark review** (concentrated value vs a tech-heavy NASDAQ) — not more risk
+  tuning — deferred (revisit if a stronger edge is wanted).
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -177,8 +178,9 @@ history (no historical news feed) and filled live at forecast time.
   both the rules and forecast backtests.
 - **Trade log** — `rules.Trade` carries `date`/`tier`; the forecast backtest collects
   every buy/sell (trims, de-risk, crisis dip-buys, rebalances) into
-  `BacktestResult.trades`. Surfaced in the **History tab** (per-asset markers on the
-  price curve, NASDAQ below, interactive Plotly).
+  `BacktestResult.trades`. Surfaced in the **Strategy tab** (per-asset markers + tier
+  on the price curve, NASDAQ below, interactive Plotly; tier-specific for de-risk,
+  "all (pro-rata)" for trims/rebalances).
 - **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
   the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
   price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
@@ -191,11 +193,17 @@ history (no historical news feed) and filled live at forecast time.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 57 tests, offline (synthetic fixtures)
+uv run pytest                                   # 59 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
+uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
+
+Daily cron: `scripts/daily_update.sh` wraps `concinvest update --sentiment` (logs to
+the gitignored `data/daily_update.log`); schedule ~22:00 Europe/Berlin via `crontab -e`
+(`CRON_TZ=Europe/Berlin`). Each run appends a dated `sentiment_analyst` snapshot so the
+live analyst signals accumulate history (the prerequisite to making them trainable).
 
 - **Unit tests** (`tests/`, offline via `conftest.py` synthetic market): technical
   indicators vs known values, cross-asset ratios (incl. VVIX/GSCI/10y-5y spread),
@@ -206,7 +214,7 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   tier-targeted `sell_tier` + riskiest-first de-risk) + rules-based & forecast-driven
   backtests + trade-log recording, crisis-drop detection, underlying-only dividends,
   leading-holiday benchmark gap, sentiment overlay (tilt/gate/leverage cap),
-  walk-forward window construction.
+  walk-forward window construction, daily-ETL sentiment-history accumulation.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -214,20 +222,26 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 ## 7. Remaining phases — detail
 
-- **Phase 3** (🔄) — done: time-ordered generator (100k-capable), honest
+- **Phase 3** (✅) — done: time-ordered generator (100k-capable), honest
   date-based train/validate split, TSCV hyperparameter tuning, feature-importance
   pruning, base-case-faithful exposure mapping, walk-forward validation
   (`concinvest validate`), risk-control tightening (Lever 2 riskiest-first de-risk
   shipped; Lever 1 vol throttle evaluated and dropped — §5c). Walk-forward mean
-  outperformance ~+5.5% but high-variance (one window −11pp). Remaining real lever is a
-  **basket/benchmark review**, not more risk tuning.
+  outperformance ~+5.5% but high-variance (one window −11pp) — **marginal win accepted**
+  as the phase outcome. The remaining real lever is a **basket/benchmark review** (not
+  more risk tuning), deferred to a future revisit.
 - **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash + tier-targeted
   `sell_tier`), `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%,
   <10%/day sell, 20% drawdown→riskiest-tier-first de-risk);
   `backtest.run_forecast_backtest` (confidence-driven exposure + re-entry + guardrails
   + tax + crisis 100%/2-month-revert + underlying dividends + trade log), wired into
-  the pipeline; live sentiment overlay (`ml/overlay.py`) on the forecast; History tab.
-- **Phase 5** — correlation/regime UI, `pipeline.fetch_and_store` daily cron, Docker.
+  the pipeline; live sentiment overlay (`ml/overlay.py`) on the forecast; Strategy tab.
+- **Phase 5** (🔄) — **done:** daily cron — `pipeline.daily_etl` (OHLCV + features +
+  cross-asset + dated `sentiment_analyst` snapshot) behind `concinvest update
+  --sentiment`, wrapped by `scripts/daily_update.sh` for ~22:00 Europe/Berlin
+  scheduling; the dated snapshots accumulate the analyst-signal history needed to make
+  the overlay trainable. **Remaining:** correlation/**regime detection** UI (rising-
+  market detection), Docker deploy.
 
 ## 8. Conventions
 

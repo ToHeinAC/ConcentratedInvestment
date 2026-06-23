@@ -29,7 +29,7 @@ class Phase1Result:
     backtest: BacktestResult
     correlation: pd.DataFrame
     sentiment: pd.DataFrame  # live analyst/sentiment rows (empty if disabled)
-    nasdaq: pd.Series  # raw NASDAQ close (for the History tab)
+    nasdaq: pd.Series  # raw NASDAQ close (for the Strategy tab)
 
 
 def fetch_and_store(
@@ -82,14 +82,42 @@ def fetch_and_store(
     return market, cross, raw
 
 
-def _fetch_sentiment(stocks: list[str], db_path=None) -> pd.DataFrame:
-    """Fetch live analyst/sentiment rows for ``stocks`` and persist them."""
-    rows = [analyst.build_sentiment_row(t) for t in stocks]
+def _fetch_sentiment(
+    stocks: list[str], as_of: _dt.date | None = None, db_path=None
+) -> pd.DataFrame:
+    """Fetch live analyst/sentiment rows for ``stocks`` (dated ``as_of``) and persist."""
+    rows = [analyst.build_sentiment_row(t, as_of=as_of) for t in stocks]
     frame = pd.concat(rows, ignore_index=True)
     conn = store.connect(db_path)
     store.upsert(conn, "sentiment_analyst", frame)
     conn.close()
     return frame
+
+
+def daily_etl(
+    start: _dt.date | str = config.START_DATE,
+    end: _dt.date | str | None = None,
+    with_sentiment: bool = True,
+    as_of: _dt.date | None = None,
+    db_path=None,
+) -> dict:
+    """Daily cron ETL (Phase 5): persist OHLCV + features + cross-asset, plus a dated
+    sentiment snapshot so the live analyst signals accumulate history (the prerequisite
+    to making them trainable). Returns a summary dict for the cron log."""
+    market, cross, raw = fetch_and_store(
+        tickers.ALL_TICKERS, start=start, end=end, db_path=db_path
+    )
+    sentiment_rows = 0
+    if with_sentiment:
+        sent = _fetch_sentiment(list(market), as_of=as_of, db_path=db_path)
+        sentiment_rows = len(sent)
+    return {
+        "as_of": str(as_of or _dt.date.today()),
+        "tickers": len(raw),
+        "stocks": len(market),
+        "cross_rows": len(cross),
+        "sentiment_rows": sentiment_rows,
+    }
 
 
 def _live_snapshots(

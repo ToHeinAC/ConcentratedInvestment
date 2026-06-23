@@ -140,7 +140,7 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `state.pay_dividends` credits it to the tier-1 lots; `_benchmark_curve` ffills
   interior gaps and bfills a leading NaN (window opening on a benchmark holiday). Every
   buy/sell (`_deploy`/`_rebalance_to_target`/guardrails) is collected, date-stamped,
-  and returned as `BacktestResult.trades` (the History tab's source).
+  and returned as `BacktestResult.trades` (the Strategy tab's source).
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`
@@ -150,17 +150,21 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 ### `app/`
 - **`streamlit_app.py`** — UI in three tabs: **Current market** (positions, cross-asset
   correlation, live analyst/sentiment), **Forecast & Backtest** (5-field forecast,
-  portfolio-vs-NASDAQ curve, feature importances), **History** (per-asset buy/sell
-  markers on the price curve from `BacktestResult.trades`, NASDAQ below — interactive
-  Plotly). Cached via `st.cache_data`.
+  portfolio-vs-NASDAQ curve, feature importances), **Strategy** (per-asset buy/sell
+  markers with position tier on the price curve from `BacktestResult.trades`, plus a
+  per-asset trade table, NASDAQ below — interactive Plotly). Cached via `st.cache_data`.
 - **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
   `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
 
 ### Top level
 - **`config.py`** — paths, dates (`START_DATE` 2020-01-01), portfolio/risk/tax
   constants, `BENCHMARK_TICKER` (`^IXIC`), `STREAMLIT_PORT` (8505).
-- **`pipeline.py`** — `run_phase1` / `fetch_and_store` orchestration.
-- **`cli.py`** — `concinvest {info,update,run,validate}`.
+- **`pipeline.py`** — `run_phase1` / `fetch_and_store` orchestration; `daily_etl`
+  (the Phase 5 cron building block — `fetch_and_store` + a dated `sentiment_analyst`
+  snapshot via `_fetch_sentiment(as_of=…)`, so the live analyst signals accumulate
+  history).
+- **`cli.py`** — `concinvest {info,update,run,validate}`; `update --sentiment` runs
+  `daily_etl` (the daily cron entry, wrapped by `scripts/daily_update.sh`).
 
 ## Key design decisions
 

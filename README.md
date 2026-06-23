@@ -49,7 +49,8 @@ uv sync
 uv run concinvest info
 
 # Daily ETL: fetch core tickers + compute/store features
-uv run concinvest update
+uv run concinvest update                # add --sentiment to also snapshot dated
+                                        # analyst rows (the daily cron form)
 
 # Full Phase 1 slice: fetch -> model -> forecast -> backtest (prints results)
 uv run concinvest run --n 4000          # add --sentiment for live news scoring
@@ -116,9 +117,9 @@ vertical slice.
 | **0** | Scaffold — package, config, tickers, CLI, tests, Docker, exit button *(done)* |
 | **1** | Thin end-to-end slice: fetch → SQLite → features (incl. baseline sentiment) → RandomForest → forecast → backtest → UI *(done)* |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum |
-| **3** | Full 100k-datapoint synthetic dataset, TimeSeriesSplit CV, feature importance, tuning |
-| **4** | Full rules engine + German tax, integrated into the backtest |
-| **5** | UI polish (correlation matrix, regime detection), daily cron, Docker deploy |
+| **3** | Full 100k-datapoint synthetic dataset, TimeSeriesSplit CV, feature importance, tuning *(done)* |
+| **4** | Full rules engine + German tax, integrated into the backtest *(done)* |
+| **5** | UI polish (correlation matrix, regime detection), daily cron, Docker deploy *(cron + sentiment snapshot done)* |
 
 See [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) for details.
 

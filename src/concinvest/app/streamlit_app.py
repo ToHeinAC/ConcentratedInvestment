@@ -6,8 +6,8 @@ Run on port 8505 (project convention)::
 
 Three tabs: **Current market** (cross-asset correlation + live analyst/sentiment),
 **Forecast & Backtest** (5-field forecast, portfolio-vs-NASDAQ curve, feature
-importance), and **History** (per-asset buy/sell events on the price curve, NASDAQ
-below — interactive Plotly).
+importance), and **Strategy** (per-asset buy/sell events with tier on the price curve,
+NASDAQ below — interactive Plotly).
 """
 
 from __future__ import annotations
@@ -55,14 +55,23 @@ def _positions_pie(positions: pd.DataFrame):
     return fig
 
 
+_TIER_LABEL = {1: "stock", 2: "2x", 3: "3x"}
+
+
+def _tier_label(tier) -> str:
+    """Human-readable position tier; tier-less (proportional) sells are pro-rata."""
+    return _TIER_LABEL.get(tier, "all (pro-rata)")
+
+
 def _trades_to_frame(trades) -> pd.DataFrame:
-    """Backtest trade log -> tidy DataFrame for the History tab."""
-    cols = ["date", "ticker", "action", "amount_eur", "tier"]
+    """Backtest trade log -> tidy DataFrame for the Strategy tab."""
+    cols = ["date", "ticker", "action", "amount_eur", "tier", "position"]
     if not trades:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame(
         [{"date": pd.to_datetime(t.date), "ticker": t.ticker, "action": t.action,
-          "amount_eur": t.amount_eur, "tier": t.tier} for t in trades]
+          "amount_eur": t.amount_eur, "tier": t.tier, "position": _tier_label(t.tier)}
+         for t in trades]
     )
 
 
@@ -113,15 +122,15 @@ def main() -> None:
 
     data = _load(n_dataset, with_sentiment)
 
-    tab_current, tab_forecast, tab_history = st.tabs(
-        ["Current market", "Forecast & Backtest", "History"]
+    tab_current, tab_forecast, tab_strategy = st.tabs(
+        ["Current market", "Forecast & Backtest", "Strategy"]
     )
     with tab_current:
         _render_current(data)
     with tab_forecast:
         _render_forecast(data)
-    with tab_history:
-        _render_history(data)
+    with tab_strategy:
+        _render_strategy(data)
 
     st.caption(f"Benchmark: {config.BENCHMARK_TICKER} · start {config.START_DATE}")
 
@@ -203,11 +212,11 @@ def _markers_at(price: pd.Series, dates) -> pd.Series:
     return s.reindex(dates)
 
 
-def _render_history(data: dict) -> None:
-    """Third tab: per-asset buy/sell events on the price curve, NASDAQ below (Plotly)."""
+def _render_strategy(data: dict) -> None:
+    """Third tab: per-asset buy/sell events (with tier) on the price curve, NASDAQ below."""
     import plotly.graph_objects as go
 
-    st.subheader("Trade history per asset")
+    st.subheader("Strategy trades per asset")
     stock = st.selectbox(
         "Asset", tickers.STOCKS,
         format_func=lambda t: f"{t} — {tickers.NAMES.get(t, t)}",
@@ -222,6 +231,8 @@ def _render_history(data: dict) -> None:
     trades = data["trades"]
     tdf = (trades[(trades["ticker"] == stock) & trades["date"].between(start, end)]
            if not trades.empty else trades)
+    if not tdf.empty:  # derive position from tier (robust to a stale cached frame)
+        tdf = tdf.assign(position=tdf["tier"].map(_tier_label))
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=price.index, y=price.values, mode="lines",
@@ -233,7 +244,8 @@ def _render_history(data: dict) -> None:
             fig.add_trace(go.Scatter(
                 x=ev["date"], y=_markers_at(price, ev["date"]).values, mode="markers",
                 name=action, marker={"symbol": symbol, "color": color, "size": 11},
-                hovertext=[f"{action} €{a:,.0f}" for a in ev["amount_eur"]],
+                hovertext=[f"{action} {pos} €{a:,.0f}"
+                           for pos, a in zip(ev["position"], ev["amount_eur"])],
             ))
     fig.update_layout(height=360, margin={"l": 0, "r": 0, "t": 30, "b": 0},
                       title=f"{stock} — buy/sell events (validation window)")
@@ -246,9 +258,23 @@ def _render_history(data: dict) -> None:
     nfig.update_layout(height=300, margin={"l": 0, "r": 0, "t": 30, "b": 0},
                        title=f"{config.BENCHMARK_TICKER} — same window")
     st.plotly_chart(nfig, use_container_width=True)
+    if tdf is not None and not tdf.empty:
+        st.dataframe(
+            tdf[["date", "action", "position", "amount_eur"]]
+            .rename(columns={"amount_eur": "amount_eur (gross)"})
+            .style.format({"amount_eur (gross)": "€{:,.0f}",
+                           "date": lambda d: d.strftime("%Y-%m-%d")}),
+            width="stretch", hide_index=True,
+        )
     n = 0 if tdf is None or tdf.empty else len(tdf)
-    st.caption(f"{n} trade(s) on {stock} over the validation window · markers at the "
-               "asset close on the trade date.")
+    st.caption(
+        f"{n} trade(s) on {stock} over the validation window · markers at the asset "
+        "close on the trade date. **position**: stock/2x/3x for riskiest-first "
+        "drawdown de-risk; *all (pro-rata)* for trims and rebalances (sold across "
+        "tiers proportionally). The book starts fully at the base case, so calm "
+        "windows show mostly sells — buys fire only on crisis dip-buys or re-entry "
+        "after a de-risk."
+    )
 
 
 if __name__ == "__main__":
