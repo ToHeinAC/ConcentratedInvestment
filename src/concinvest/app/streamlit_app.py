@@ -289,6 +289,19 @@ def _markers_at(price: pd.Series, dates) -> pd.Series:
     return s.reindex(dates)
 
 
+def _signal_bar(index, dates) -> pd.DatetimeIndex:
+    """Map each execution date to the **prior trading bar** in ``index`` (the signal day).
+
+    The backtest decides from day T-1's features (confidence is lagged one day) and
+    executes on T; markers are drawn on T-1 so they align with the price bar that
+    triggered the trade. Display-only — the backtest is unchanged."""
+    idx = pd.DatetimeIndex(index)
+    if len(idx) == 0:
+        return pd.DatetimeIndex(dates)
+    pos = (idx.searchsorted(pd.DatetimeIndex(dates)) - 1).clip(0)
+    return idx[pos]
+
+
 def _render_strategy(data: dict) -> None:
     """Third tab: per-asset buy/sell events (with tier) on the price curve, NASDAQ below."""
     import plotly.graph_objects as go
@@ -318,14 +331,15 @@ def _render_strategy(data: dict) -> None:
                                   ("sell", "triangle-down", "red")]:
         ev = tdf[tdf["action"] == action] if not tdf.empty else tdf
         if not ev.empty:
+            sig = _signal_bar(price.index, ev["date"])  # decision day (T-1)
             fig.add_trace(go.Scatter(
-                x=ev["date"], y=_markers_at(price, ev["date"]).values, mode="markers",
+                x=sig, y=_markers_at(price, sig).values, mode="markers",
                 name=action, marker={"symbol": symbol, "color": color, "size": 11},
                 hovertext=[f"{action} {pos} €{a:,.0f}"
                            for pos, a in zip(ev["position"], ev["amount_eur"])],
             ))
     fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 30, "b": 0},
-                      title=f"{stock} — price & buy/sell events (validation window)")
+                      title=f"{stock} — price & buy/sell signals (decision day, T-1)")
     st.plotly_chart(fig, use_container_width=True)
 
     _render_tier_balances(data.get("tier_curve"), stock, start, end, tdf)
@@ -370,8 +384,9 @@ def _tier_markers(fig, tier: str, line: pd.Series, tdf) -> None:
         ev = rel[rel["action"] == action]
         if ev.empty:
             continue
+        sig = _signal_bar(line.index, ev["date"])  # decision day (T-1)
         fig.add_trace(go.Scatter(
-            x=ev["date"], y=_markers_at(line, ev["date"]).values, mode="markers",
+            x=sig, y=_markers_at(line, sig).values, mode="markers",
             marker={"symbol": symbol, "color": color, "size": 9,
                     "line": {"width": 1, "color": "white"}},
             name=f"{tier} {action}", showlegend=False,
@@ -398,7 +413,7 @@ def _render_tier_balances(tier_curve, stock: str, start, end, tdf=None) -> None:
         _tier_markers(fig, tier, line, tdf)
     fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 30, "b": 0},
                       yaxis_title="balance (€)",
-                      title=f"{stock} — balance per tier with buy/sell signals")
+                      title=f"{stock} — balance per tier with buy/sell signals (decision day, T-1)")
     st.plotly_chart(fig, use_container_width=True)
 
 
