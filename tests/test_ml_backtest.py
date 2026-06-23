@@ -1,6 +1,7 @@
 """Tests for dataset generation, model training, forecasting, and backtest."""
 
 import pandas as pd
+import pytest
 
 from concinvest import config
 from concinvest.backtest import engine
@@ -101,6 +102,23 @@ def test_target_exposure_base_case_faithful():
     assert engine._target_exposure(0.0) == 0.0
 
 
+def test_target_name_fraction_base_case_faithful():
+    base = engine._PER_NAME_BASE
+    assert engine._target_name_fraction(0.5) == base          # neutral -> per-name base
+    assert engine._target_name_fraction(0.9) == base          # bullish -> capped
+    assert abs(engine._target_name_fraction(0.25) - base * 0.5) < 1e-9  # bearish
+
+
+def test_rebalance_names_handles_each_name_independently():
+    st = pstate.build_base_case(100_000.0, stocks=["A", "B"])
+    # A bearish (target halved), B neutral (stays at base) -> only A is trimmed.
+    targets = {"A": engine._target_name_fraction(0.25),
+               "B": engine._target_name_fraction(0.5)}
+    trades = engine._rebalance_names_to_target(st, targets, ["A", "B"])
+    assert [t.ticker for t in trades] == ["A"]
+    assert trades[0].action == "sell"
+
+
 def test_is_crisis_detects_sharp_drop():
     crash = pd.Series([-0.03] * 12)  # ~26% cumulative over 10 days
     assert engine._is_crisis(crash, 11)
@@ -155,6 +173,11 @@ def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     # Trade log: well-formed and dated (recording is unit-tested in _deploy / de-risk).
     assert isinstance(res.trades, list)
     assert all(t.date is not None and t.action in {"buy", "sell"} for t in res.trades)
+    # Final book is exposed for the Current-portfolio view; matches the curve's end.
+    assert res.final_state is not None
+    assert res.final_state.total_value() == pytest.approx(
+        float(res.curve["portfolio"].iloc[-1])
+    )
 
 
 def test_backtest_produces_curve(synth_market, synth_raw):

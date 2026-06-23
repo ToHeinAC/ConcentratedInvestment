@@ -125,13 +125,18 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 
 ### `backtest/`
 - **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
-  portfolio/benchmark returns + `beats_benchmark` + `trades`): `run_backtest()` (Phase 1
+  portfolio/benchmark returns + `beats_benchmark` + `trades` + `final_state`, the
+  forecast backtest's end-of-window `PortfolioState` for the Current-portfolio view): `run_backtest()` (Phase 1
   confidence-scaled equal-weight basket), `run_rules_backtest()` (base-case leveraged
   book under guardrails, sell-side only), and `run_forecast_backtest()` — **the
-  pipeline's backtest** — the leveraged book whose target equity exposure follows
-  `_target_exposure(mean buy-confidence)`: it holds the 90% base case while the model
-  is neutral-to-bullish (≥ 0.5) and only de-risks below 0.5, with a `REBALANCE_BAND`
-  dead-band, cash re-entry, daily guardrails, and German tax. `_is_crisis` (a basket
+  pipeline's backtest** — the leveraged book where **each name's** target portfolio
+  fraction follows `_target_name_fraction(that name's buy-confidence)`: it holds the
+  per-name base weight while the name is neutral-to-bullish (≥ 0.5) and only de-risks
+  that name below 0.5, rebalancing names independently (`_rebalance_names_to_target`,
+  per-name dead-band) so a bearish read on one stock trims only that stock — Story.md's
+  per-ticker forecast. Cash re-entry, daily guardrails, and German tax apply.
+  (The book-level `_target_exposure` dial is retained for the Phase-1 `run_backtest`.)
+  `_is_crisis` (a basket
   drop > `CRISIS_DROP` over `CRISIS_LOOKBACK` days) overrides this for
   `CRISIS_REVERT_DAYS`: it `_deploy`s the cash reserve to ~100% invested (buy-the-dip)
   and holds — no de-risk/rebalance-to-cash — then reverts to base (Story.md crisis
@@ -139,8 +144,8 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   day's underlying dividend yield (`adj_close` minus `close` return) and
   `state.pay_dividends` credits it to the tier-1 lots; `_benchmark_curve` ffills
   interior gaps and bfills a leading NaN (window opening on a benchmark holiday). Every
-  buy/sell (`_deploy`/`_rebalance_to_target`/guardrails) is collected, date-stamped,
-  and returned as `BacktestResult.trades` (the Strategy tab's source).
+  buy/sell (`_deploy`/`_rebalance_names_to_target`/guardrails) is collected,
+  date-stamped, and returned as `BacktestResult.trades` (the Strategy tab's source).
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`
@@ -148,11 +153,15 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `concinvest validate`; the honest read vs any single-year backtest.
 
 ### `app/`
-- **`streamlit_app.py`** — UI in three tabs: **Current market** (positions, cross-asset
-  correlation, live analyst/sentiment), **Forecast & Backtest** (5-field forecast,
-  portfolio-vs-NASDAQ curve, feature importances), **Strategy** (per-asset buy/sell
-  markers with position tier on the price curve from `BacktestResult.trades`, plus a
-  per-asset trade table, NASDAQ below — interactive Plotly). Cached via `st.cache_data`.
+- **`streamlit_app.py`** — UI in three tabs: **Current market** (the *actual*
+  end-of-backtest book from `BacktestResult.final_state` — real per-tier values and live
+  cash level, not the static template; Plotly donut; cross-asset correlation with three
+  views — 5 stocks vs NASDAQ / all assets / one stock vs all as a point chart; a
+  simplified analyst/sentiment summary — rating, news tone, target upside), **Forecast &
+  Backtest** (5-field forecast, portfolio-vs-NASDAQ curve, feature importances),
+  **Strategy** (per-asset buy/sell markers with position tier on the price curve from
+  `BacktestResult.trades`, plus a per-asset trade table, NASDAQ below — interactive
+  Plotly). Cached via `st.cache_data`.
 - **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
   `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
 

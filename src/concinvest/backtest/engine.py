@@ -27,6 +27,7 @@ class BacktestResult:
     portfolio_return: float
     benchmark_return: float
     trades: list[rules.Trade] = field(default_factory=list)  # forecast backtest only
+    final_state: pstate.PortfolioState | None = None  # end-of-window book (forecast bt)
 
     @property
     def outperformance(self) -> float:
@@ -51,6 +52,26 @@ def _daily_exposure(model: TrainedModel, panel: pd.DataFrame, dates: pd.Datetime
     expo = rows.groupby(level="date")["_conf"].mean()
     expo = expo.reindex(dates).ffill().fillna(1.0)
     return expo.shift(1).bfill().clip(0.0, 1.0)
+
+
+def _name_confidence(
+    model: TrainedModel, panel: pd.DataFrame, dates: pd.DatetimeIndex
+) -> pd.DataFrame:
+    """Per-stock P(buy profitable, leverage=1) as a date×ticker frame, lagged 1 day.
+
+    Unlike ``_daily_exposure`` (which averages across stocks into one series), this
+    keeps each name's own confidence so the forecast backtest can trade names
+    independently (Story.md: the forecast is per ticker)."""
+    rows = panel.loc[panel.index.get_level_values("date").isin(dates)].copy()
+    if rows.empty:
+        return pd.DataFrame(index=dates)
+    feats = rows.reindex(columns=FEATURE_COLS).copy()
+    feats["is_sell"] = 0
+    feats["leverage"] = 1
+    feats = feats.fillna(0.0)
+    conf = pd.Series(model.predict_confidence(feats), index=rows.index)
+    wide = conf.unstack("ticker").reindex(dates).ffill().fillna(1.0)
+    return wide.shift(1).bfill().clip(0.0, 1.0)
 
 
 def run_backtest(
@@ -171,31 +192,38 @@ def _target_exposure(confidence: float) -> float:
     return config.BASE_STOCK_ALLOCATION * min(1.0, confidence / _NEUTRAL_CONF)
 
 
-def _rebalance_to_target(
-    state: pstate.PortfolioState, target_frac: float, stocks: list[str]
-) -> list[rules.Trade]:
-    """Nudge invested fraction toward ``target_frac`` within the daily move cap.
+# Per-name base weight (12%+3%+3%) and a dead-band scaled from the book-level
+# REBALANCE_BAND by the per-name share of the base allocation, so a single name's
+# rebalance fires at the same relative sensitivity as the old aggregate dial.
+_PER_NAME_BASE: float = sum(config.BASE_PER_NAME_SPLIT.values())
+_PER_NAME_BAND: float = config.REBALANCE_BAND * _PER_NAME_BASE / config.BASE_STOCK_ALLOCATION
 
-    Buys deploy toward the base-case per-name weights; sells reduce names
-    proportionally. A dead-band keeps the book mostly static (base case). Returns the
-    trades performed.
-    """
+
+def _target_name_fraction(confidence: float) -> float:
+    """Base-case-faithful target portfolio fraction for one name from its own
+    buy-confidence (holds the per-name base while neutral-to-bullish, de-risks below)."""
+    return _PER_NAME_BASE * min(1.0, confidence / _NEUTRAL_CONF)
+
+
+def _rebalance_names_to_target(
+    state: pstate.PortfolioState, targets: dict[str, float], stocks: list[str]
+) -> list[rules.Trade]:
+    """Nudge **each name** toward its own target portfolio fraction, within the daily
+    move cap and a per-name dead-band. Names are handled independently (Story.md), so a
+    bearish read on one stock trims only that stock. Returns the trades performed."""
     total = state.total_value()
     if total <= 0:
         return []
-    invested_frac = (total - state.cash) / total
-    dev = target_frac - invested_frac
-    if abs(dev) < config.REBALANCE_BAND:
-        return []
-    move = min(abs(dev), config.MAX_DAILY_SELL) * total  # cap daily turnover
-    if dev > 0:
-        return _deploy(state, move, stocks)
     trades: list[rules.Trade] = []
     for ticker in stocks:
-        cap = config.MAX_DAILY_SELL * state.total_value()
-        gross = min(move / len(stocks), cap)
-        if state.sell_name(ticker, gross) > 0:
-            trades.append(rules.Trade(ticker, "sell", gross))
+        dev = targets.get(ticker, _PER_NAME_BASE) - state.name_value(ticker) / total
+        if abs(dev) < _PER_NAME_BAND:
+            continue
+        move = min(abs(dev), config.MAX_DAILY_SELL) * total  # cap daily turnover
+        if dev > 0:
+            trades += _deploy_name(state, ticker, move)
+        elif state.sell_name(ticker, move) > 0:
+            trades.append(rules.Trade(ticker, "sell", move))
     return trades
 
 
@@ -207,19 +235,26 @@ def _is_crisis(basket_ret: pd.Series, i: int) -> bool:
     return float((1.0 + window).prod() - 1.0) <= -config.CRISIS_DROP
 
 
-def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> list[rules.Trade]:
-    """Deploy ``amount`` of cash across stocks by the base-case tier split. Returns one
-    aggregate buy ``Trade`` per stock actually funded."""
+def _deploy_name(
+    state: pstate.PortfolioState, ticker: str, amount: float
+) -> list[rules.Trade]:
+    """Deploy ``amount`` of cash into one name by the base-case tier split (12/3/3).
+    Returns one aggregate buy ``Trade`` if any cash was actually invested."""
     split = config.BASE_PER_NAME_SPLIT
     weight_sum = sum(split.values())
+    invested = 0.0
+    for tier_name, weight in split.items():
+        invested += state.buy(ticker, rules._TIER_OF[tier_name], amount * weight / weight_sum)
+    return [rules.Trade(ticker, "buy", invested)] if invested > 0 else []
+
+
+def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> list[rules.Trade]:
+    """Deploy ``amount`` of cash equally across stocks by the base-case tier split
+    (crisis buy-the-dip). One aggregate buy ``Trade`` per stock actually funded."""
     per_stock = amount / len(stocks)
     trades: list[rules.Trade] = []
     for ticker in stocks:
-        invested = 0.0
-        for tier_name, weight in split.items():
-            invested += state.buy(ticker, rules._TIER_OF[tier_name], per_stock * weight / weight_sum)
-        if invested > 0:
-            trades.append(rules.Trade(ticker, "buy", invested))
+        trades += _deploy_name(state, ticker, per_stock)
     return trades
 
 
@@ -232,10 +267,12 @@ def run_forecast_backtest(
     end: str | None = None,
     capital: float = config.INITIAL_CAPITAL_EUR,
 ) -> BacktestResult:
-    """Rules + forecast backtest: the base-case leveraged book whose target equity
-    exposure tracks the model's mean buy-confidence (lagged, scaled by the 90% base
-    allocation), with cash re-entry, daily guardrails, and German tax. ``start``/``end``
-    bound the window (inclusive)."""
+    """Rules + forecast backtest: the base-case leveraged book where **each name's**
+    target portfolio fraction tracks that name's own buy-confidence (lagged, scaled by
+    its per-name base weight), with cash re-entry, daily guardrails, and German tax.
+    Names are rebalanced independently (Story.md: the forecast is per ticker), so a
+    bearish read on one stock trims only that stock. ``start``/``end`` bound the window
+    (inclusive)."""
     closes = pd.DataFrame({t: df["close"] for t, df in market.items()})
     closes.index = pd.to_datetime(closes.index)
     closes = closes.sort_index()
@@ -244,7 +281,7 @@ def run_forecast_backtest(
     rets = closes.pct_change().fillna(0.0)
     dates = pd.DatetimeIndex(rets.index)
 
-    exposure = _daily_exposure(model, panel, dates)  # mean buy-confidence, lagged
+    name_conf = _name_confidence(model, panel, dates)  # per-stock buy-confidence, lagged
     basket_ret = rets.mean(axis=1)  # equal-weight basket return, for crisis detection
     divs = _dividend_yields(market, dates)
     stocks = list(market)
@@ -264,9 +301,15 @@ def run_forecast_backtest(
                 crisis_day = i
                 day += _deploy(state, state.cash, stocks)  # buy the dip
             else:
-                day += _rebalance_to_target(
-                    state, _target_exposure(float(exposure.get(date, 1.0))), stocks
-                )
+                conf_row = name_conf.loc[date] if date in name_conf.index else None
+                targets = {
+                    t: _target_name_fraction(
+                        float(conf_row[t])
+                        if conf_row is not None and t in conf_row else 1.0
+                    )
+                    for t in stocks
+                }
+                day += _rebalance_names_to_target(state, targets, stocks)
         # During crisis: stay fully invested (no de-risk, no rebalance toward cash).
         for t in day:
             t.date = date
@@ -278,4 +321,5 @@ def run_forecast_backtest(
     curve = pd.DataFrame({"portfolio": portfolio, "benchmark": benchmark}).dropna()
     p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
     b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
-    return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret, trades=trades)
+    return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret,
+                          trades=trades, final_state=state)

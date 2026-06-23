@@ -108,10 +108,14 @@ history (no historical news feed) and filled live at forecast time.
   `MIN_IMPORTANCE` (action encoding always kept); `tune_and_train(prune=True)` refits
   on the reduced set. `FEATURE_COLS` stays the stable superset callers build;
   `TrainedModel.features` records the columns actually used.
-- **Exposure mapping** — `backtest._target_exposure` holds the 90% base case while
-  mean buy-confidence is neutral-to-bullish (≥ 0.5, the classifier's natural
-  boundary) and only de-risks proportionally below 0.5. Principled (not tuned to the
-  validation year); the drawdown guardrail still handles crashes independently.
+- **Exposure mapping** — `backtest._target_name_fraction` holds **each name's**
+  per-name base weight (18% = 12+3+3) while *that name's* buy-confidence is
+  neutral-to-bullish (≥ 0.5, the classifier's natural boundary) and only de-risks it
+  proportionally below 0.5 (per-stock — Story.md's forecast is per ticker). Names are
+  rebalanced independently (`_rebalance_names_to_target`), so a bearish read on one
+  stock trims only that stock; a single-number book-level dial (`_target_exposure`) is
+  retained for the Phase-1 `run_backtest`. Principled (not tuned to the validation
+  year); the drawdown guardrail still handles crashes independently.
 - **Live result (last validation year, `--n 10000`)** — portfolio **+28.8%** vs
   NASDAQ **+34.9%** under the base-case-faithful mapping (was +15.2% under the old
   linear-confidence one).
@@ -121,17 +125,18 @@ history (no historical news feed) and filled live at forecast time.
 
   | window | portfolio | NASDAQ | vs |
   |--------|-----------|--------|----|
-  | 2022-08→2023-07 | +49.3% | +13.1% | **+36.2** |
-  | 2023-07→2024-07 | +20.4% | +31.5% | −11.0 |
-  | 2024-07→2025-07 | +8.1% | +11.3% | −3.2 |
-  | 2025-07→2026-06 | +29.2% | +28.2% | **+1.0** |
+  | 2022-08→2023-07 | +46.9% | +13.1% | **+33.8** |
+  | 2023-07→2024-07 | +27.1% | +31.5% | −4.4 |
+  | 2024-07→2025-07 | +13.7% | +11.3% | **+2.4** |
+  | 2025-07→2026-06 | +29.3% | +28.2% | **+1.2** |
 
-  **Win rate 50% (2/4), mean outperformance +5.7%.** The strategy is high-variance:
-  it crushed the 2022-23 value/commodity rotation. The crisis path (§5d) flipped the
-  former worst window (2024-25) from −20.2% to **+8.1%** — the buy-the-dip caught the
-  recovery within the 2-month window — and underlying dividends plus the
-  leading-holiday benchmark fix nudged the last window just ahead of NASDAQ, lifting
-  the win rate to 2/4 and mean outperformance to +5.7%.
+  **Win rate 75% (3/4), mean outperformance +8.2%** (per-stock rebalance). The strategy
+  is high-variance: it crushed the 2022-23 value/commodity rotation. The crisis path
+  (§5d) flipped the former worst window (2024-25) from −20.2% to a win, and the
+  **per-stock confidence rebalance** (each name trimmed by its own forecast, not a
+  basket-mean dial) lifted the win rate from 2/4 to 3/4 and mean outperformance from
+  +5.7% to +8.2% — the worst window's shortfall roughly halved (−11.0 → −4.4). (Numbers
+  vary run-to-run with the synthetic sample.)
 - **Risk-lever experiment** — two levers were evaluated to make the win more robust.
   **Lever 2 (leverage-aware de-risk)** — drawdown de-risk now sells the riskiest tier
   first (3x → 2x → stock) via `state.sell_tier`, keeping the Story.md 10%/name/day cap;
@@ -140,10 +145,11 @@ history (no historical news feed) and filled live at forecast time.
   walk-forward showed it cut the strategy's leverage edge and fought the crisis dip-buy
   (mean fell to +3.5% at a VIX-28 stress threshold, +2.9% at VIX-20). Lesson: this
   basket's edge *is* the leverage in up-markets; de-levering on vol is net-negative.
-- **Closed** — "beat NASDAQ" is a **marginal win on average** (mean ~+5.5%, one window
-  still trailing 11pp), accepted as the Phase 3 outcome. The honest remaining lever is a
-  **basket/benchmark review** (concentrated value vs a tech-heavy NASDAQ) — not more risk
-  tuning — deferred (revisit if a stronger edge is wanted).
+- **Closed** — "beat NASDAQ" is now a **75% win rate, mean +8.2%** across the
+  walk-forward (up from the marginal 50%/+5.7% under the basket-mean dial), accepted as
+  the Phase 3 outcome. Still high-variance (one window trails ~4pp). The honest remaining
+  lever is a **basket/benchmark review** (concentrated value vs a tech-heavy NASDAQ) —
+  not more risk tuning — deferred (revisit if a stronger edge is wanted).
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -159,9 +165,11 @@ history (no historical news feed) and filled live at forecast time.
   `apply_guardrails` runs them per day (de-risk, then trim).
 - **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
   guardrails vs NASDAQ (sell-side only).
-- **`backtest.run_forecast_backtest`** — the book's target equity exposure tracks the
-  model's mean buy-confidence (lagged, scaled by the 90% base allocation) with a
-  `REBALANCE_BAND` dead-band, cash re-entry, daily guardrails, and tax. **This is now
+- **`backtest.run_forecast_backtest`** — **each name's** target portfolio fraction
+  tracks *that name's* buy-confidence (lagged, scaled by its per-name base weight) via
+  `_target_name_fraction` + `_rebalance_names_to_target`, with a per-name dead-band,
+  cash re-entry, daily guardrails, and tax. Names rebalance independently (Story.md's
+  per-ticker forecast), so a bearish read on one stock trims only that stock. **This is
   the pipeline/UI backtest.** "Optimal weighting" stays delegated to ML confidence.
 - **Crisis path** — `_is_crisis` flags a basket drop > `CRISIS_DROP` (15%) over
   `CRISIS_LOOKBACK` (10) trading days; on a flag the cash reserve is `_deploy`-ed to
@@ -193,7 +201,7 @@ history (no historical news feed) and filled live at forecast time.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 59 tests, offline (synthetic fixtures)
+uv run pytest                                   # 61 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
@@ -214,7 +222,8 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   tier-targeted `sell_tier` + riskiest-first de-risk) + rules-based & forecast-driven
   backtests + trade-log recording, crisis-drop detection, underlying-only dividends,
   leading-holiday benchmark gap, sentiment overlay (tilt/gate/leverage cap),
-  walk-forward window construction, daily-ETL sentiment-history accumulation.
+  walk-forward window construction, daily-ETL sentiment-history accumulation,
+  per-stock target fraction + independent-name rebalance, backtest final-state.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -226,10 +235,11 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   date-based train/validate split, TSCV hyperparameter tuning, feature-importance
   pruning, base-case-faithful exposure mapping, walk-forward validation
   (`concinvest validate`), risk-control tightening (Lever 2 riskiest-first de-risk
-  shipped; Lever 1 vol throttle evaluated and dropped — §5c). Walk-forward mean
-  outperformance ~+5.5% but high-variance (one window −11pp) — **marginal win accepted**
-  as the phase outcome. The remaining real lever is a **basket/benchmark review** (not
-  more risk tuning), deferred to a future revisit.
+  shipped; Lever 1 vol throttle evaluated and dropped — §5c), and **per-stock
+  confidence rebalancing** (each name trimmed by its own forecast). Walk-forward
+  **win rate 75% (3/4), mean +8.2%**, up from 50%/+5.7% under the old basket-mean dial.
+  Still high-variance (one window ~−4pp). The remaining real lever is a
+  **basket/benchmark review** (not more risk tuning), deferred to a future revisit.
 - **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash + tier-targeted
   `sell_tier`), `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%,
   <10%/day sell, 20% drawdown→riskiest-tier-first de-risk);

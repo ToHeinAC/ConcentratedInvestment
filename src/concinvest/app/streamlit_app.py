@@ -21,41 +21,44 @@ from concinvest.data import tickers
 from concinvest.ml.forecast import forecasts_to_frame
 
 
-def _base_case_positions(total_value: float) -> pd.DataFrame:
-    """Base-case target portfolio (Story.md) valued at ``total_value`` EUR.
+_TIER_LABEL = {1: "stock", 2: "2x", 3: "3x"}
 
-    No live position tracking yet (Phase 4); this is the base-case allocation:
-    each of the 5 names split 12% / 3% / 3% across stock / 2x / 3x, plus 10% cash.
+
+def _state_to_frame(state) -> pd.DataFrame:
+    """Actual end-of-backtest book -> positions DataFrame (per-tier value + weight).
+
+    Reflects the evolved portfolio (unequal names, time-varying cash), not the static
+    base-case template. ``state`` is the forecast backtest's final ``PortfolioState``.
     """
+    cols = ["ticker", "name", "type", "weight", "value_eur"]
+    if state is None:
+        return pd.DataFrame(columns=cols)
+    total = state.total_value()
     rows = []
     for ticker in tickers.STOCKS:
-        for tier, weight in config.BASE_PER_NAME_SPLIT.items():
-            rows.append({
-                "ticker": ticker,
-                "name": tickers.NAMES.get(ticker, ticker),
-                "type": tier,
-                "weight": weight,
-                "value_eur": weight * total_value,
-            })
+        for tier in (1, 2, 3):
+            value = sum(l.value for l in state.lots
+                        if l.ticker == ticker and l.tier == tier)
+            if value <= 0:
+                continue
+            rows.append({"ticker": ticker, "name": tickers.NAMES.get(ticker, ticker),
+                         "type": _TIER_LABEL[tier], "weight": value / total,
+                         "value_eur": value})
     rows.append({"ticker": "CASH", "name": "Cash", "type": "cash",
-                 "weight": config.BASE_CASH_ALLOCATION,
-                 "value_eur": config.BASE_CASH_ALLOCATION * total_value})
-    return pd.DataFrame(rows)
+                 "weight": state.cash / total, "value_eur": state.cash})
+    return pd.DataFrame(rows, columns=cols)
 
 
 def _positions_pie(positions: pd.DataFrame):
-    """Matplotlib pie of relative sizing per name (tiers summed) + cash."""
-    import matplotlib.pyplot as plt
+    """Plotly donut of relative sizing per name (tiers summed) + cash."""
+    import plotly.graph_objects as go
 
-    by_name = positions.groupby("ticker", sort=False)["weight"].sum()
-    fig, ax = plt.subplots(figsize=(4, 4))
-    ax.pie(by_name.values, labels=list(by_name.index), autopct="%1.0f%%",
-           startangle=90, counterclock=False)
-    ax.set_aspect("equal")
+    by_name = positions.groupby("ticker", sort=False)["value_eur"].sum()
+    fig = go.Figure(go.Pie(labels=list(by_name.index), values=list(by_name.values),
+                           hole=0.35, sort=False, textinfo="label+percent"))
+    fig.update_layout(height=340, margin={"l": 0, "r": 0, "t": 10, "b": 0},
+                      showlegend=False)
     return fig
-
-
-_TIER_LABEL = {1: "stock", 2: "2x", 3: "3x"}
 
 
 def _tier_label(tier) -> str:
@@ -94,6 +97,7 @@ def _load(n_dataset: int, with_sentiment: bool):
         "market": res.market,
         "nasdaq": res.nasdaq,
         "trades": _trades_to_frame(res.backtest.trades),
+        "positions": _state_to_frame(res.backtest.final_state),
     }
 
 
@@ -137,37 +141,99 @@ def main() -> None:
 
 def _render_current(data: dict) -> None:
     """First tab: current portfolio, market state — correlation, live signals."""
-    total_value = float(data["curve"]["portfolio"].iloc[-1])
-    positions = _base_case_positions(total_value)
+    positions = data.get("positions")
+    if positions is None or positions.empty:
+        st.info("Press **Run / refresh** to compute the current portfolio.")
+        return
+    total_value = float(positions["value_eur"].sum())
+    cash_w = float(positions.loc[positions["ticker"] == "CASH", "weight"].sum())
 
-    st.subheader("Current portfolio (base case)")
-    st.metric("Portfolio value", f"€{total_value:,.0f}")
+    st.subheader("Current portfolio")
+    c1, c2 = st.columns(2)
+    c1.metric("Portfolio value", f"€{total_value:,.0f}")
+    c2.metric("Cash", f"{cash_w:.0%}")
     col_tbl, col_pie = st.columns([3, 2])
     with col_tbl:
         st.dataframe(
-            positions.style.format({"weight": "{:.0%}", "value_eur": "€{:,.0f}"}),
+            positions.style.format({"weight": "{:.1%}", "value_eur": "€{:,.0f}"}),
             width="stretch", hide_index=True,
         )
     with col_pie:
-        st.pyplot(_positions_pie(positions))
+        st.plotly_chart(_positions_pie(positions), use_container_width=True)
     st.caption(
-        "Base-case target allocation (Story.md); live position tracking with "
-        "realized 2x/3x lots arrives in Phase 4."
+        "Actual end-of-backtest book — evolved from the 90/10 base case over the "
+        "validation window. Weights and cash are live (cash rises on de-risk, falls "
+        "to ~0% on a crisis buy-the-dip), not the static template."
     )
 
+    _render_correlation(data["correlation"])
+    _render_sentiment(data.get("sentiment"), data.get("market", {}))
+
+
+def _render_correlation(corr: pd.DataFrame) -> None:
+    """Cross-asset correlation (recent 60 days) with three selectable views."""
     st.subheader("Cross-asset correlation (recent 60 days)")
-    st.dataframe(
-        data["correlation"].style.format("{:.2f}").background_gradient(
-            cmap="RdYlGn", vmin=-1, vmax=1
-        ),
-        width="stretch",
-    )
+    view = st.radio("View", ["5 stocks vs NASDAQ", "All assets", "One stock vs all"],
+                    horizontal=True, label_visibility="collapsed")
+    grad = {"cmap": "RdYlGn", "vmin": -1, "vmax": 1}
+    if view == "5 stocks vs NASDAQ":
+        keys = [t for t in (*tickers.STOCKS, config.BENCHMARK_TICKER) if t in corr.columns]
+        st.dataframe(corr.loc[keys, keys].style.format("{:.2f}")
+                     .background_gradient(**grad), width="stretch")
+    elif view == "All assets":
+        st.dataframe(corr.style.format("{:.2f}").background_gradient(**grad),
+                     width="stretch")
+    else:
+        import plotly.graph_objects as go
 
-    sent = data["sentiment"]
-    if sent is not None and not sent.empty:
-        st.subheader("Live analyst & sentiment signals")
-        st.dataframe(sent, width="stretch", hide_index=True)
-        st.caption("Stored in `sentiment_analyst`; not yet model features (no history).")
+        choices = [t for t in tickers.STOCKS if t in corr.columns]
+        stock = st.selectbox("Stock", choices,
+                             format_func=lambda t: f"{t} — {tickers.NAMES.get(t, t)}")
+        ser = corr[stock].drop(labels=[stock]).sort_values()
+        fig = go.Figure(go.Scatter(
+            x=ser.values, y=list(ser.index), mode="markers",
+            marker={"size": 11, "color": ser.values, "colorscale": "RdYlGn",
+                    "cmin": -1, "cmax": 1, "showscale": True}))
+        fig.update_layout(height=460, xaxis_title=f"correlation with {stock}",
+                          xaxis_range=[-1, 1], margin={"l": 0, "r": 0, "t": 10, "b": 0})
+        st.plotly_chart(fig, use_container_width=True)
+
+
+_RATINGS = [(1.5, "Strong Buy"), (2.5, "Buy"), (3.5, "Hold"), (4.5, "Sell")]
+
+
+def _rating(mean) -> str:
+    if mean is None or pd.isna(mean):
+        return "—"
+    return next((label for hi, label in _RATINGS if mean < hi), "Strong Sell")
+
+
+def _news_label(score) -> str:
+    if score is None or pd.isna(score):
+        return "—"
+    return "Positive" if score > 0.5 else "Negative" if score < -0.5 else "Neutral"
+
+
+def _render_sentiment(sent, market: dict) -> None:
+    """Simplified, human-readable analyst/sentiment summary per stock."""
+    if sent is None or sent.empty:
+        return
+    rows = []
+    for _, r in sent.iterrows():
+        t = r["ticker"]
+        price = float(market[t]["close"].iloc[-1]) if t in market else None
+        target = r.get("analyst_target_mean")
+        upside = (target / price - 1.0) if (target and price) else None
+        rows.append({"Stock": tickers.NAMES.get(t, t),
+                     "Analyst rating": _rating(r.get("recommendation_mean")),
+                     "News": _news_label(r.get("news_sentiment_score")),
+                     "Target upside": upside})
+    df = pd.DataFrame(rows)
+    st.subheader("Analyst & sentiment (live)")
+    st.dataframe(df.style.format({"Target upside": "{:+.0%}"}, na_rep="—"),
+                 width="stretch", hide_index=True)
+    st.caption("Analyst consensus rating · news-headline tone · upside to mean price "
+               "target. Live signals (display only; no history to train on yet).")
 
 
 def _render_forecast(data: dict) -> None:
