@@ -269,8 +269,14 @@ def _render_forecast(data: dict) -> None:
     st.caption(f"Model CV ROC-AUC (mean): {data['mean_cv']:.3f}")
 
     st.subheader("Feature importance")
+    import plotly.graph_objects as go
+
     imp = pd.Series(data["importance"]).sort_values(ascending=False)
-    st.bar_chart(imp)
+    fig = go.Figure(go.Bar(x=list(imp.index), y=imp.values, marker_color="#1f77b4"))
+    fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 10, "b": 0},
+                      xaxis={"categoryorder": "total descending"},
+                      yaxis_title="importance")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _series(frame_or_series) -> pd.Series:
