@@ -150,7 +150,7 @@ def run_rules_backtest(
 ) -> BacktestResult:
     """Replay the Story.md base-case leveraged book under the daily risk guardrails.
 
-    Starts from the 90/10 base case (per-name 12%/3%/3% stock/2x/3x), marks every
+    Starts from the 90/10 base case (per-name 9%/4.5%/4.5% stock/2x/3x), marks every
     lot to market each day, then applies the sell-side guardrails (drawdown de-risk,
     per-name trim, 10%/day cap) with German tax on realized gains. No re-entry yet —
     forecast-driven buys/sells are the next Phase 4 increment.
@@ -195,7 +195,7 @@ def _target_exposure(confidence: float) -> float:
     return config.BASE_STOCK_ALLOCATION * min(1.0, confidence / _NEUTRAL_CONF)
 
 
-# Per-name base weight (12%+3%+3%) and a dead-band scaled from the book-level
+# Per-name base weight (9%+4.5%+4.5%) and a dead-band scaled from the book-level
 # REBALANCE_BAND by the per-name share of the base allocation, so a single name's
 # rebalance fires at the same relative sensitivity as the old aggregate dial.
 _PER_NAME_BASE: float = sum(config.BASE_PER_NAME_SPLIT.values())
@@ -204,8 +204,10 @@ _PER_NAME_BAND: float = config.REBALANCE_BAND * _PER_NAME_BASE / config.BASE_STO
 
 def _target_name_fraction(confidence: float) -> float:
     """Base-case-faithful target portfolio fraction for one name from its own
-    buy-confidence (holds the per-name base while neutral-to-bullish, de-risks below)."""
-    return _PER_NAME_BASE * min(1.0, confidence / _NEUTRAL_CONF)
+    buy-confidence (holds the per-name base while neutral-to-bullish, de-risks below),
+    floored at ``MIN_NAME_WEIGHT`` so each stock stays ≥ 6% of the book (Story.md)."""
+    target = _PER_NAME_BASE * min(1.0, confidence / _NEUTRAL_CONF)
+    return max(target, config.MIN_NAME_WEIGHT)
 
 
 def _rebalance_names_to_target(
@@ -244,7 +246,7 @@ def _is_crisis(basket_ret: pd.Series, i: int) -> bool:
 def _deploy_name(
     state: pstate.PortfolioState, ticker: str, amount: float
 ) -> list[rules.Trade]:
-    """Deploy ``amount`` of cash into one name by the base-case tier split (12/3/3).
+    """Deploy ``amount`` of cash into one name by the base-case tier split (9/4.5/4.5).
     Returns one buy ``Trade`` **per funded tier** (each with its actual € invested)."""
     split = config.BASE_PER_NAME_SPLIT
     weight_sum = sum(split.values())
@@ -322,7 +324,8 @@ def run_forecast_backtest(
     for i, (date, row) in enumerate(rets.iterrows()):
         state.mark(row.to_dict())
         state.pay_dividends(divs.loc[date].to_dict() if date in divs.index else {})
-        day = rules.trim_overweight(state)  # per-name cap applies even in crisis
+        # Structural caps apply even in crisis: per-name 33% trim + underlying ≥ 2x+3x.
+        day = rules.trim_overweight(state) + rules.enforce_underlying_dominance(state)
         in_crisis = crisis_day is not None and (i - crisis_day) < config.CRISIS_REVERT_DAYS
         if not in_crisis:
             crisis_day = None

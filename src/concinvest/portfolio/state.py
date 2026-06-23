@@ -126,7 +126,7 @@ def build_base_case(
     stocks: list[str] | None = None,
     split: dict[str, float] | None = None,
 ) -> PortfolioState:
-    """Construct the Story.md base case: per-name 12%/3%/3% stock/2x/3x, 10% cash."""
+    """Construct the Story.md base case: per-name 9%/4.5%/4.5% stock/2x/3x, 10% cash."""
     from ..data import tickers
 
     stocks = stocks or tickers.STOCKS

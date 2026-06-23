@@ -25,7 +25,7 @@ def test_base_case_allocation_90_10():
     st = state.build_base_case(100_000.0, stocks=["A", "B", "C", "D", "E"])
     assert abs(st.total_value() - 100_000.0) < 1e-6
     assert abs(st.cash - 10_000.0) < 1e-6  # 90% invested, 10% cash
-    assert abs(st.name_value("A") - 18_000.0) < 1e-6  # 12% + 3% + 3%
+    assert abs(st.name_value("A") - 18_000.0) < 1e-6  # 9% + 4.5% + 4.5%
 
 
 def test_mark_applies_leverage_multiplier():
@@ -112,3 +112,34 @@ def test_drawdown_derisk_sells_riskiest_tier_first():
     assert trades[0].tier == 3  # 3x cut before stock
     # First sell capped at 10% of portfolio (75) = 7.5, taken from the 3x lot.
     assert abs(trades[0].amount_eur - 7.5) < 1e-6
+
+
+def test_drawdown_derisk_respects_min_name_floor():
+    st = state.PortfolioState(cash=0.0, high_water=140.0)
+    # total=100 (28% drawdown). A sits near the 6% floor; the floor (not the 10%/day cap)
+    # binds for it, so A is sold down to exactly 6% and no further.
+    st.lots = [state.Lot("A", 1, 8.0, 8.0)] + [state.Lot(c, 1, 23.0, 23.0) for c in "BCDE"]
+    rules.drawdown_derisk(st)
+    for c in "ABCDE":
+        assert st.name_value(c) >= config.MIN_NAME_WEIGHT * 100.0 - 1e-6  # >= 6% floor
+    assert abs(st.name_value("A") - config.MIN_NAME_WEIGHT * 100.0) < 1e-6  # floored at 6%
+    # 5 names x 6% floor => at least 30% invested => cash stays < 70% (Story.md).
+    assert st.cash <= config.MAX_CASH * 100.0 + 1e-6
+
+
+# --- underlying dominance (underlying >= 2x + 3x) -------------------------
+def test_enforce_underlying_dominance_trims_leverage_riskiest_first():
+    st = state.PortfolioState(cash=0.0, high_water=100.0)
+    # underlying 10 < leveraged (2x 5 + 3x 15 = 20); excess 10, day-capped at 10% of 30.
+    st.lots = [state.Lot("A", 1, 10.0, 10.0), state.Lot("A", 2, 5.0, 5.0),
+               state.Lot("A", 3, 15.0, 15.0)]
+    trades = rules.enforce_underlying_dominance(st)
+    assert trades[0].tier == 3  # riskiest tier shed first
+    assert abs(trades[0].amount_eur - 3.0) < 1e-6  # capped at 10%/day of total (30)
+
+
+def test_no_dominance_trim_in_base_case():
+    st = state.build_base_case(100_000.0, stocks=["A", "B", "C", "D", "E"])
+    # Base case is 9% underlying == 9% leveraged per name -> exactly on the boundary,
+    # so dominance holds (excess == 0, no trim) until an up-move tips leverage ahead.
+    assert rules.enforce_underlying_dominance(st) == []

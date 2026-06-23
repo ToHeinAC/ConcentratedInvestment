@@ -121,7 +121,10 @@ def test_target_name_fraction_base_case_faithful():
     base = engine._PER_NAME_BASE
     assert engine._target_name_fraction(0.5) == base          # neutral -> per-name base
     assert engine._target_name_fraction(0.9) == base          # bullish -> capped
-    assert abs(engine._target_name_fraction(0.25) - base * 0.5) < 1e-9  # bearish
+    # Mildly bearish de-risks proportionally, staying above the 6% floor (base*0.5 = 9%).
+    assert abs(engine._target_name_fraction(0.25) - base * 0.5) < 1e-9
+    # A deeply bearish read is floored at the 6% per-name minimum.
+    assert engine._target_name_fraction(0.0) == config.MIN_NAME_WEIGHT
 
 
 def test_rebalance_names_handles_each_name_independently():

@@ -156,33 +156,48 @@ history (no historical news feed) and filled live at forecast time.
   the Phase 3 outcome. Still high-variance (one window trails ~4pp). The honest remaining
   lever is a **basket/benchmark review** (concentrated value vs a tech-heavy NASDAQ) —
   not more risk tuning — deferred (revisit if a stronger edge is wanted).
+- **Rule/base-case update (current)** — added guardrails **underlying ≥ 2x+3x**
+  (`enforce_underlying_dominance`) and a **6% per-name floor / cash < 70%**
+  (`MIN_NAME_WEIGHT`/`MAX_CASH`); the per-name de-risk floor binds even in a drawdown
+  (book ≥ 30% invested at all times). The base case was re-tilted to **9%/4.5%/4.5%**
+  (was 12%/3%/3%) — same 18%/name but more leverage. Net walk-forward improved to
+  **75% (3/4), mean +11.2%** (the 9%==9% start sits on the dominance boundary so the
+  trim fires often, but the heavier base leverage more than offsets it — the basket's
+  edge is leverage in up-markets, §5c Lever-1). Numbers vary run-to-run with the
+  synthetic sample.
 
 ## 5d. Phase 4 design notes (in progress)
 
 - **`portfolio/` package** — `state.PortfolioState` holds leveraged lots (tier 1/2/3,
   each with a cost basis) + cash; `mark()` applies daily constant-leverage returns;
   `sell_name()` realizes gains proportionally and pays tax. `build_base_case()` is the
-  90/10 book (per-name 12%/3%/3%).
+  90/10 book (per-name 9%/4.5%/4.5%).
 - **`tax.tax_on_sale`** — 25% flat Abgeltungsteuer; realized losses accumulate in a
   **full-portfolio** carry pool (one pool across all names, never expiring) that offsets
   future gains before tax — i.e. gains and losses net across the whole book over time
   (Story.md). (Only nuance vs. German law: a loss does not retroactively refund tax on a
   gain realized *earlier* the same year — a second-order effect.)
-- **`rules`** — deterministic sell-side guardrails, both shedding the **riskiest tier
+- **`rules`** — deterministic sell-side guardrails, all shedding the **riskiest tier
   first** (3x → 2x → stock, via `sell_riskiest_first`): 33% per-name → trim 3% (the
-  post-upstreak case), 20% drawdown → de-risk toward cash (the crash case); every sell
-  capped at 10%/day. `apply_guardrails` runs them per day (de-risk, then trim). The
+  post-upstreak case); **underlying ≥ 2x+3x** (`enforce_underlying_dominance`) → sell
+  leverage excess when a rally lets the leveraged tiers outgrow the underlying; 20%
+  drawdown → de-risk toward cash (the crash case) but **never below the 6% per-name
+  floor** (`MIN_NAME_WEIGHT`; the retained floor is underlying-only). Every sell capped
+  at 10%/day. `apply_guardrails` runs them per day (de-risk, dominance, then trim). The
   routine confidence-rebalance (in `backtest.engine`) sells **pro-rata** across tiers,
   preserving the leverage edge in up-markets (tier-grading there cost ~5pp in the
-  walk-forward — §5c).
+  walk-forward — §5c). The 6% floor across 5 names keeps **cash < 70%** (`MAX_CASH`)
+  structurally (book ≥ 30% invested at all times).
 - **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
   guardrails vs NASDAQ (sell-side only).
 - **`backtest.run_forecast_backtest`** — **each name's** target portfolio fraction
-  tracks *that name's* buy-confidence (lagged, scaled by its per-name base weight) via
-  `_target_name_fraction` + `_rebalance_names_to_target`, with a per-name dead-band,
-  cash re-entry, daily guardrails, and tax. Names rebalance independently (Story.md's
-  per-ticker forecast), so a bearish read on one stock trims only that stock. **This is
-  the pipeline/UI backtest.** "Optimal weighting" stays delegated to ML confidence.
+  tracks *that name's* buy-confidence (lagged, scaled by its per-name base weight,
+  **floored at the 6% `MIN_NAME_WEIGHT`**) via `_target_name_fraction` +
+  `_rebalance_names_to_target`, with a per-name dead-band, cash re-entry, daily
+  guardrails (incl. underlying-dominance), and tax. Names rebalance independently
+  (Story.md's per-ticker forecast), so a bearish read on one stock trims only that
+  stock. **This is the pipeline/UI backtest.** "Optimal weighting" stays delegated to
+  ML confidence.
 - **Crisis path** — `_is_crisis` flags a basket drop > `CRISIS_DROP` (15%) over
   `CRISIS_LOOKBACK` (10) trading days; on a flag the cash reserve is `_deploy`-ed to
   ~100% invested (buy-the-dip) and the book holds that for `CRISIS_REVERT_DAYS` (60,
@@ -197,7 +212,7 @@ history (no historical news feed) and filled live at forecast time.
   only** (Story.md: not the leveraged positions), net of the flat 25% tax. Wired into
   both the rules and forecast backtests.
 - **Trade log + per-tier balances** — `rules.Trade` carries `date`/`tier`; every buy/sell
-  is logged **per tier** with its actual € (deploys split 12/3/3; the pro-rata rebalance
+  is logged **per tier** with its actual € (deploys split 9/4.5/4.5; the pro-rata rebalance
   sell is decomposed by `_sell_proportional` — selling logic unchanged, returns identical)
   into `BacktestResult.trades`, and each day's per-`(ticker, tier)` value into
   `BacktestResult.tier_curve`. The **Strategy tab** stacks three panels on a **shared
@@ -223,7 +238,7 @@ history (no historical news feed) and filled live at forecast time.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 63 tests, offline (synthetic fixtures)
+uv run pytest                                   # 66 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
@@ -245,8 +260,9 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   backtests + trade-log recording, crisis-drop detection, underlying-only dividends,
   leading-holiday benchmark gap, sentiment overlay (tilt/gate/leverage cap),
   walk-forward window construction, daily-ETL sentiment-history accumulation,
-  per-stock target fraction + independent-name rebalance, backtest final-state,
-  riskiest-tier-first trim, forecast book-limits (cash/holdings caps).
+  per-stock target fraction (6% floor) + independent-name rebalance, backtest
+  final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
+  underlying-dominance leverage trim, forecast book-limits (cash/holdings caps).
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -265,7 +281,8 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   **basket/benchmark review** (not more risk tuning), deferred to a future revisit.
 - **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash + tier-targeted
   `sell_tier`), `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%,
-  <10%/day sell, 20% drawdown→riskiest-tier-first de-risk);
+  underlying≥2x+3x, <10%/day sell, 20% drawdown→riskiest-tier-first de-risk to a 6%
+  per-name floor / cash<70%);
   `backtest.run_forecast_backtest` (confidence-driven exposure + re-entry + guardrails
   + tax + crisis 100%/2-month-revert + underlying dividends + trade log), wired into
   the pipeline; live sentiment overlay (`ml/overlay.py`) on the forecast; Strategy tab.

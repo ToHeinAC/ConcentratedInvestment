@@ -116,15 +116,18 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   sells one tier only (tier-targeted de-risk) — both route through `_sell_lots`;
   `pay_dividends()` credits cash on tier-1 (underlying) lots only, net of flat tax
   (Story.md: leveraged lots earn no dividend); `build_base_case()` constructs the
-  Story.md 90/10 book (per-name 12%/3%/3%).
+  Story.md 90/10 book (per-name 9%/4.5%/4.5%).
 - **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a single
   **full-portfolio** realized-loss carry pool (never expiring) that offsets future gains
   before tax, so gains and losses net across the whole book over time (Story.md).
 - **`rules.py`** — deterministic sell-side guardrails returning dated `Trade`s
-  (`ticker, action, amount_eur, tier, date`): per-name trim (33%→3%) and drawdown
-  de-risk (>20%→cash) both shed the **riskiest tier first** (3x→2x→stock) via the shared
-  `sell_riskiest_first` (built on `state.sell_tier`), within a 10%/day sell cap;
-  `apply_guardrails()` runs them per day. (The routine confidence-rebalance in
+  (`ticker, action, amount_eur, tier, date`): per-name trim (33%→3%),
+  `enforce_underlying_dominance` (keep underlying ≥ 2x+3x by selling the leverage excess),
+  and drawdown de-risk (>20%→cash, but **never below the 6% `MIN_NAME_WEIGHT` floor** —
+  the floor is underlying-only, and across 5 names keeps cash < 70% / `MAX_CASH`) all shed
+  the **riskiest tier first** (3x→2x→stock) via the shared `sell_riskiest_first` (built on
+  `state.sell_tier`), within a 10%/day sell cap; `apply_guardrails()` runs them per day
+  (de-risk, dominance, trim). (The routine confidence-rebalance in
   `backtest.engine` sells pro-rata instead — grading it cost ~5pp; IMPLEMENTATION §5c.) (A vol-aware leverage throttle was
   evaluated here and dropped — walk-forward showed it hurt; see IMPLEMENTATION §5c.)
   The crisis buy-the-dip path lives in `backtest.engine` (`_is_crisis`/`_deploy`).
@@ -152,7 +155,7 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `state.pay_dividends` credits it to the tier-1 lots; `_benchmark_curve` ffills
   interior gaps and bfills a leading NaN (window opening on a benchmark holiday). Every
   buy/sell (`_deploy`/`_rebalance_names_to_target`/guardrails) is collected **per tier**
-  with its actual € (deploys split 12/3/3; the pro-rata rebalance sell via
+  with its actual € (deploys split 9/4.5/4.5; the pro-rata rebalance sell via
   `_sell_proportional`), date-stamped, and returned as `BacktestResult.trades` (the
   Strategy tab's source); each day's per-`(ticker, tier)` value is `BacktestResult.tier_curve`.
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
