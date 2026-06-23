@@ -100,6 +100,14 @@ def test_target_exposure_base_case_faithful():
     assert engine._target_exposure(0.0) == 0.0
 
 
+def test_is_crisis_detects_sharp_drop():
+    crash = pd.Series([-0.03] * 12)  # ~26% cumulative over 10 days
+    assert engine._is_crisis(crash, 11)
+    calm = pd.Series([0.001] * 12)
+    assert not engine._is_crisis(calm, 11)
+    assert not engine._is_crisis(crash, 3)  # too early: lookback not yet filled
+
+
 def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=4)

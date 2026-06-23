@@ -110,7 +110,8 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   that offsets future gains before tax.
 - **`rules.py`** — deterministic sell-side guardrails returning `Trade`s: per-name
   trim (33%→3%), drawdown de-risk (>20%→cash), 10%/day sell cap; `apply_guardrails()`
-  runs them per day. Crisis/dividends/forecast-driven trading are the next increment.
+  runs them per day. The crisis buy-the-dip path lives in `backtest.engine`
+  (`_is_crisis`/`_deploy`); dividends on the underlying are the next increment.
 
 ### `backtest/`
 - **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
@@ -120,7 +121,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   pipeline's backtest** — the leveraged book whose target equity exposure follows
   `_target_exposure(mean buy-confidence)`: it holds the 90% base case while the model
   is neutral-to-bullish (≥ 0.5) and only de-risks below 0.5, with a `REBALANCE_BAND`
-  dead-band, cash re-entry, daily guardrails, and German tax.
+  dead-band, cash re-entry, daily guardrails, and German tax. `_is_crisis` (a basket
+  drop > `CRISIS_DROP` over `CRISIS_LOOKBACK` days) overrides this for
+  `CRISIS_REVERT_DAYS`: it `_deploy`s the cash reserve to ~100% invested (buy-the-dip)
+  and holds — no de-risk/rebalance-to-cash — then reverts to base (Story.md crisis
+  rule). The per-name trim still fires in crisis.
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`

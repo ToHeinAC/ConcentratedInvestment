@@ -117,23 +117,25 @@ history (no historical news feed) and filled live at forecast time.
   linear-confidence one).
 - **Walk-forward validation** (`concinvest validate`, `backtest.walkforward`) — the
   single-year read is misleading. Across four trained-then-tested 1-year windows
-  (`--n 10000`):
+  (`--n 10000`, with the Phase 4 crisis path active):
 
   | window | portfolio | NASDAQ | vs |
   |--------|-----------|--------|----|
   | 2022-08→2023-07 | +45.2% | +11.9% | **+33.4** |
   | 2023-07→2024-07 | +21.5% | +30.2% | −8.7 |
-  | 2024-07→2025-07 | −20.2% | +10.4% | −30.6 |
-  | 2025-07→2026-06 | +25.7% | +28.7% | −3.0 |
+  | 2024-07→2025-07 | +8.1% | +10.4% | −2.3 |
+  | 2025-07→2026-06 | +25.7% | +28.6% | −2.9 |
 
-  **Win rate 25% (1/4), mean outperformance −2.3%.** The strategy is high-variance:
-  it crushed the 2022-23 value/commodity rotation but lost 20% absolute in 2024-25 —
-  notably, the 20%-drawdown guardrail under-protected, because 2x/3x leverage drops
-  faster than the 10%/day de-risk cap can unwind.
-- **Open** — "beat NASDAQ" is **not robustly met** (the single +35% window was one of
-  the *better* outcomes). Honest next steps: stronger risk control (Phase 4 crisis
-  path; faster/leverage-aware de-risk) and a basket/leverage review — not fitting one
-  window.
+  **Win rate 25% (1/4), mean outperformance +4.8%.** The strategy is high-variance:
+  it crushed the 2022-23 value/commodity rotation. The crisis path (§5d) flipped the
+  worst window (2024-25) from −20.2% to **+8.1%** — the buy-the-dip caught the
+  recovery within the 2-month window — lifting mean outperformance from −2.3% to
+  +4.8%, though the win rate is unchanged (the three losing windows now only narrowly
+  trail NASDAQ).
+- **Open** — "beat NASDAQ" is **closer but still not a robust win** (mean +4.8% is
+  carried by one +33pp window; the other three trail by ≤9pp). Honest next steps:
+  a basket/leverage review and faster/leverage-aware de-risk for *non-crash* declines
+  (the drawdown cap only nibbles at 10%/day) — not fitting one window.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -152,13 +154,22 @@ history (no historical news feed) and filled live at forecast time.
   model's mean buy-confidence (lagged, scaled by the 90% base allocation) with a
   `REBALANCE_BAND` dead-band, cash re-entry, daily guardrails, and tax. **This is now
   the pipeline/UI backtest.** "Optimal weighting" stays delegated to ML confidence.
-- **Open** — crisis 100%/2-month-revert path and dividends on the underlying.
+- **Crisis path** — `_is_crisis` flags a basket drop > `CRISIS_DROP` (15%) over
+  `CRISIS_LOOKBACK` (10) trading days; on a flag the cash reserve is `_deploy`-ed to
+  ~100% invested (buy-the-dip) and the book holds that for `CRISIS_REVERT_DAYS` (60,
+  ~2 months) — no de-risk or rebalance-to-cash during the window — then reverts to the
+  base case. The per-name trim still fires in crisis; crisis takes precedence over the
+  drawdown de-risk. Story.md: "temporarily go 100% / 0% cash on a major pullback, back
+  to base within 2 months." Lifted the worst walk-forward window from −20.2% to +8.1%
+  (§5c).
+- **Open** — dividends on the underlying; faster/leverage-aware de-risk for non-crash
+  declines.
 
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 44 tests, offline (synthetic fixtures)
+uv run pytest                                   # 45 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
@@ -170,7 +181,8 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
   train + 5-field forecast, backtest curve, portfolio state/tax/guardrails +
-  rules-based & forecast-driven backtests, walk-forward window construction.
+  rules-based & forecast-driven backtests, crisis-drop detection, walk-forward
+  window construction.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -187,8 +199,8 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 - **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
   `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
   sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven
-  exposure + re-entry + guardrails + tax), now wired into the pipeline. Remaining:
-  crisis 100% / 2-month revert, dividends on the underlying.
+  exposure + re-entry + guardrails + tax + crisis 100%/2-month-revert path), now
+  wired into the pipeline. Remaining: dividends on the underlying.
 - **Phase 5** — correlation/regime UI, `pipeline.fetch_and_store` daily cron, Docker.
 
 ## 8. Conventions

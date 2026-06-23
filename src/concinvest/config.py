@@ -36,6 +36,12 @@ MAX_DAILY_SELL: float = 0.10  # each sell < 10% of portfolio/day
 MAX_DRAWDOWN: float = 0.20  # de-risk to cash beyond this drawdown
 CRISIS_REVERT_DAYS: int = 60  # ~2 months to return to base case
 
+# Crisis / black-swan: a basket drop exceeding CRISIS_DROP over CRISIS_LOOKBACK
+# trading days deploys the cash reserve to ~100% invested (buy-the-dip), then
+# reverts to the base case within CRISIS_REVERT_DAYS.
+CRISIS_DROP: float = 0.15
+CRISIS_LOOKBACK: int = 10
+
 # Tax (Story.md: German flat Abgeltungsteuer with loss offsetting).
 CAPITAL_GAINS_TAX_RATE: float = 0.25
 

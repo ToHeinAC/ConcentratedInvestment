@@ -165,6 +165,14 @@ def _rebalance_to_target(state: pstate.PortfolioState, target_frac: float, stock
             state.sell_name(ticker, min(move / len(stocks), cap))
 
 
+def _is_crisis(basket_ret: pd.Series, i: int) -> bool:
+    """True if the basket fell more than ``CRISIS_DROP`` over the trailing lookback."""
+    if i + 1 < config.CRISIS_LOOKBACK:
+        return False
+    window = basket_ret.iloc[i + 1 - config.CRISIS_LOOKBACK : i + 1]
+    return float((1.0 + window).prod() - 1.0) <= -config.CRISIS_DROP
+
+
 def _deploy(state: pstate.PortfolioState, amount: float, stocks: list[str]) -> None:
     """Deploy ``amount`` of cash across stocks by the base-case tier split."""
     split = config.BASE_PER_NAME_SPLIT
@@ -198,14 +206,24 @@ def run_forecast_backtest(
     dates = pd.DatetimeIndex(rets.index)
 
     exposure = _daily_exposure(model, panel, dates)  # mean buy-confidence, lagged
+    basket_ret = rets.mean(axis=1)  # equal-weight basket return, for crisis detection
     stocks = list(market)
     state = pstate.build_base_case(capital, stocks=stocks)
+    crisis_day: int | None = None
     values: list[float] = []
-    for date, row in rets.iterrows():
+    for i, (date, row) in enumerate(rets.iterrows()):
         state.mark(row.to_dict())
-        rules.apply_guardrails(state)
-        target = _target_exposure(float(exposure.get(date, 1.0)))
-        _rebalance_to_target(state, target, stocks)
+        rules.trim_overweight(state)  # per-name cap applies even in crisis
+        in_crisis = crisis_day is not None and (i - crisis_day) < config.CRISIS_REVERT_DAYS
+        if not in_crisis:
+            crisis_day = None
+            rules.drawdown_derisk(state)
+            if _is_crisis(basket_ret, i):
+                crisis_day = i
+                _deploy(state, state.cash, stocks)  # buy the dip: go ~100% invested
+            else:
+                _rebalance_to_target(state, _target_exposure(float(exposure.get(date, 1.0))), stocks)
+        # During crisis: stay fully invested (no de-risk, no rebalance toward cash).
         values.append(state.total_value())
 
     portfolio = pd.Series(values, index=dates)
