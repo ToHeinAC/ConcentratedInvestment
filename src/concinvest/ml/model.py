@@ -17,7 +17,11 @@ from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from .dataset import ACTION_FEATURES, FEATURE_COLS
 
 # Features below this RandomForest importance are pruned (action encoding is kept).
+# The effective cutoff also scales with the feature count (``KEEP_UNIFORM_FRAC`` of the
+# uniform 1/n share), so adding many correlated features — e.g. the momentum lags —
+# can't dilute every feature below an absolute cutoff and prune the whole market signal.
 MIN_IMPORTANCE: float = 0.02
+KEEP_UNIFORM_FRAC: float = 0.5  # keep features >= this fraction of the uniform share
 
 
 # Small TimeSeriesSplit grid for Phase 3 tuning (kept tight so live runs stay fast).
@@ -106,9 +110,16 @@ def train(
 
 
 def select_features(trained: TrainedModel, min_importance: float = MIN_IMPORTANCE) -> list[str]:
-    """Keep features at/above ``min_importance`` plus the action encoding, in
-    ``FEATURE_COLS`` order (so the model contract stays a stable superset)."""
-    keep = {f for f, imp in trained.feature_importance.items() if imp >= min_importance}
+    """Keep features at/above the prune cutoff plus the action encoding, in
+    ``FEATURE_COLS`` order (so the model contract stays a stable superset).
+
+    The cutoff is ``min(min_importance, KEEP_UNIFORM_FRAC / n_features)`` — the absolute
+    floor for a small feature set (≤17 features keeps the historical 0.02 behaviour), but
+    relaxed for a large one so a wide, correlated set (the momentum lags) doesn't push
+    every market feature below an absolute cutoff and collapse the model to action-only."""
+    imp = trained.feature_importance
+    cutoff = min(min_importance, KEEP_UNIFORM_FRAC / max(len(imp), 1))
+    keep = {f for f, v in imp.items() if v >= cutoff}
     keep.update(ACTION_FEATURES)
     return [f for f in FEATURE_COLS if f in keep]
 

@@ -170,11 +170,17 @@ is neutral over history (no historical news feed) and filled live at forecast ti
 - **Momentum lags (current)** — each technical + cross-asset feature is now also carried
   at `_lag{3,10,30,100}` (its value that many trading days back), so the trees see recent
   trajectory rather than only the point-in-time level. Lags are strictly past data (no
-  leakage); the leading edge fills to 0; low-importance lags are pruned by the existing
-  `MIN_IMPORTANCE` step. Raw CV ROC-AUC is ~flat (0.558 vs 0.564), but the walk-forward
-  improved to **75% (3/4), mean +14.6%** (from +11.6%), mostly by sharpening the 2022-23
-  rotation (+42.8 → +55.4) and enabling per-name **sell** signals. Part of the lift is
-  within run-to-run noise; the win rate held at 75%.
+  leakage); the leading edge fills to 0. **Prune fix:** adding 52 lag columns diluted
+  every RF importance below the absolute `MIN_IMPORTANCE` (0.02), so `select_features`
+  collapsed the model to the action encoding only (`is_sell`/`leverage`) — a degenerate
+  forecaster (a constant per-name confidence → just the leveraged base case). The cutoff
+  now scales with feature count (`min(MIN_IMPORTANCE, KEEP_UNIFORM_FRAC / n)`), keeping
+  67/69 features; the lags rank **among the top signals** (`sma50_sma200_ratio_lag100`,
+  `price_sma200_ratio_lag100`, `yield_10y_lag3`). With the model genuinely using them,
+  CV ROC-AUC ≈ 0.562 and the walk-forward is **75% (3/4), mean +11.7%** — i.e. ≈ neutral
+  vs the +11.6% before lags (the strategy already captured most of that signal; the
+  earlier "+14.6%" was the degenerate-model artifact, not the lags). Net: lags are
+  informative but aggregate-neutral; the durable fix is the count-scaled prune.
 
 ## 5d. Phase 4 design notes (in progress)
 

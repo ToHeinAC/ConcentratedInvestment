@@ -68,6 +68,18 @@ def test_prune_keeps_action_features_and_forecasts(synth_market, synth_raw):
     assert forecast.forecast(m, snaps, threshold=0.0)
 
 
+def test_select_features_relaxes_cutoff_for_wide_feature_set():
+    # Uniform importances over the full (wide, lag-augmented) contract: each ~1/69 ≈
+    # 0.0145, below the absolute 0.02 floor (which would collapse the model to the
+    # action encoding) but above the scaled cutoff 0.5/69 ≈ 0.0072 — so they survive.
+    feats = dataset.FEATURE_COLS
+    imp = {f: 1.0 / len(feats) for f in feats}
+    tm = model.TrainedModel(clf=None, feature_importance=imp)
+    kept = model.select_features(tm)
+    assert set(dataset.ACTION_FEATURES).issubset(kept)
+    assert len(kept) == len(feats)  # market features not pruned away
+
+
 def test_train_and_forecast_five_fields(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=800, horizon=20, seed=2)

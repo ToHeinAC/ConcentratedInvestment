@@ -94,9 +94,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`model.py`** — `train()` fits a `RandomForestClassifier` with `TimeSeriesSplit`
   ROC-AUC CV and feature importances, returning a `TrainedModel` whose
   `predict_confidence()` gives `P(profitable)`. `tune()` selects the best `PARAM_GRID`
-  entry by mean TSCV AUC; `select_features()` prunes features below `MIN_IMPORTANCE`
-  (action encoding always kept); `tune_and_train(prune=True)` tunes, prunes, and
-  refits. `FEATURE_COLS` stays the stable superset callers build, while
+  entry by mean TSCV AUC; `select_features()` prunes features below a cutoff that
+  **scales with the feature count** — `min(MIN_IMPORTANCE, KEEP_UNIFORM_FRAC / n)`, so a
+  wide correlated set (the momentum lags) can't dilute every importance below the
+  absolute floor and collapse the model to the action encoding (action encoding always
+  kept); `tune_and_train(prune=True)` tunes, prunes, and refits. `FEATURE_COLS` stays the stable superset callers build, while
   `TrainedModel.features` records the columns actually used. The pipeline trains on
   the pre-validation split only, so the validation-window backtest is out-of-sample.
 - **`forecast.py`** — `forecast()` enumerates buy/sell × leverage candidates per
