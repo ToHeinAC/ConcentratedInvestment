@@ -193,6 +193,13 @@ def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     assert res.final_state.total_value() == pytest.approx(
         float(res.curve["portfolio"].iloc[-1])
     )
+    # Per-tier balance history for the Strategy tab: (ticker, tier) columns, dated.
+    tc = res.tier_curve
+    assert tc is not None and not tc.empty
+    assert tc.columns.names == ["ticker", "tier"]
+    a_stock = synth_market and list(synth_market)[0]
+    assert a_stock in tc.columns.get_level_values("ticker")
+    assert set(tc[a_stock].columns) <= {"stock", "2x", "3x"}
 
 
 def test_backtest_produces_curve(synth_market, synth_raw):

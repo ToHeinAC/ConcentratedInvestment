@@ -20,6 +20,8 @@ from ..ml.model import TrainedModel
 from ..portfolio import rules
 from ..portfolio import state as pstate
 
+_TIER_LABEL = {1: "stock", 2: "2x", 3: "3x"}
+
 
 @dataclass
 class BacktestResult:
@@ -28,6 +30,7 @@ class BacktestResult:
     benchmark_return: float
     trades: list[rules.Trade] = field(default_factory=list)  # forecast backtest only
     final_state: pstate.PortfolioState | None = None  # end-of-window book (forecast bt)
+    tier_curve: pd.DataFrame | None = None  # daily per-(ticker, tier) value (forecast bt)
 
     @property
     def outperformance(self) -> float:
@@ -291,6 +294,7 @@ def run_forecast_backtest(
     state = pstate.build_base_case(capital, stocks=stocks)
     crisis_day: int | None = None
     values: list[float] = []
+    tier_rows: list[dict] = []  # end-of-day value per (ticker, tier) for the Strategy tab
     trades: list[rules.Trade] = []
     for i, (date, row) in enumerate(rets.iterrows()):
         state.mark(row.to_dict())
@@ -318,11 +322,21 @@ def run_forecast_backtest(
             t.date = date
         trades.extend(day)
         values.append(state.total_value())
+        snap: dict[tuple[str, str], float] = {}
+        for lot in state.lots:
+            key = (lot.ticker, _TIER_LABEL[lot.tier])
+            snap[key] = snap.get(key, 0.0) + lot.value
+        tier_rows.append(snap)
 
     portfolio = pd.Series(values, index=dates)
+    tier_curve = pd.DataFrame(tier_rows, index=dates).fillna(0.0)
+    if not tier_curve.empty:
+        tier_curve.columns = pd.MultiIndex.from_tuples(
+            tier_curve.columns, names=["ticker", "tier"]
+        )
     benchmark = _benchmark_curve(benchmark_close, dates)
     curve = pd.DataFrame({"portfolio": portfolio, "benchmark": benchmark}).dropna()
     p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
     b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
     return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret,
-                          trades=trades, final_state=state)
+                          trades=trades, final_state=state, tier_curve=tier_curve)

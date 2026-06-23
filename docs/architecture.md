@@ -131,8 +131,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 
 ### `backtest/`
 - **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
-  portfolio/benchmark returns + `beats_benchmark` + `trades` + `final_state`, the
-  forecast backtest's end-of-window `PortfolioState` for the Current-portfolio view): `run_backtest()` (Phase 1
+  portfolio/benchmark returns + `beats_benchmark` + `trades` + `final_state` (the
+  forecast backtest's end-of-window `PortfolioState` for the Current-portfolio view) +
+  `tier_curve` (daily per-`(ticker, tier)` value for the Strategy tab)): `run_backtest()` (Phase 1
   confidence-scaled equal-weight basket), `run_rules_backtest()` (base-case leveraged
   book under guardrails, sell-side only), and `run_forecast_backtest()` — **the
   pipeline's backtest** — the leveraged book where **each name's** target portfolio
@@ -166,9 +167,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   ticker→name legend popover; a simplified analyst/sentiment summary — rating, news tone,
   target upside), **Forecast & Backtest** (5-field forecast sized to the live book,
   portfolio-vs-NASDAQ curve as cumulative %, feature importances),
-  **Strategy** (per-asset buy/sell markers with position tier on the price curve from
-  `BacktestResult.trades`, plus a per-asset trade table, NASDAQ below — interactive
-  Plotly). Cached via `st.cache_data`.
+  **Strategy** (per asset: buy/sell markers on the price curve from
+  `BacktestResult.trades`, a per-tier balance-evolution chart from
+  `BacktestResult.tier_curve`, NASDAQ below, and the trade table behind a popover button
+  — interactive Plotly). Cached via `st.cache_data`.
 - **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
   `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
 

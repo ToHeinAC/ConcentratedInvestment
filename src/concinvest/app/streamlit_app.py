@@ -97,8 +97,9 @@ def _load(n_dataset: int, with_sentiment: bool):
         "market": res.market,
         "nasdaq": res.nasdaq,
         "trades": _trades_to_frame(res.backtest.trades),
-        # getattr: tolerate a stale hot-reloaded engine without final_state.
+        # getattr: tolerate a stale hot-reloaded engine without these fields.
         "positions": _state_to_frame(getattr(res.backtest, "final_state", None)),
+        "tier_curve": getattr(res.backtest, "tier_curve", None),
     }
 
 
@@ -268,7 +269,7 @@ def _render_forecast(data: dict) -> None:
     st.caption(f"Model CV ROC-AUC (mean): {data['mean_cv']:.3f}")
 
     st.subheader("Feature importance")
-    imp = pd.Series(data["importance"]).sort_values(ascending=True)
+    imp = pd.Series(data["importance"]).sort_values(ascending=False)
     st.bar_chart(imp)
 
 
@@ -292,7 +293,7 @@ def _render_strategy(data: dict) -> None:
     """Third tab: per-asset buy/sell events (with tier) on the price curve, NASDAQ below."""
     import plotly.graph_objects as go
 
-    st.subheader("Strategy trades per asset")
+    st.subheader("Strategy per asset")
     stock = st.selectbox(
         "Asset", tickers.STOCKS,
         format_func=lambda t: f"{t} — {tickers.NAMES.get(t, t)}",
@@ -323,34 +324,57 @@ def _render_strategy(data: dict) -> None:
                 hovertext=[f"{action} {pos} €{a:,.0f}"
                            for pos, a in zip(ev["position"], ev["amount_eur"])],
             ))
-    fig.update_layout(height=360, margin={"l": 0, "r": 0, "t": 30, "b": 0},
-                      title=f"{stock} — buy/sell events (validation window)")
+    fig.update_layout(height=320, margin={"l": 0, "r": 0, "t": 30, "b": 0},
+                      title=f"{stock} — price & buy/sell events (validation window)")
     st.plotly_chart(fig, use_container_width=True)
+
+    _render_tier_balances(data.get("tier_curve"), stock, start, end)
 
     nq = _series(data["nasdaq"]).loc[start:end]
     nfig = go.Figure()
     nfig.add_trace(go.Scatter(x=nq.index, y=nq.values, mode="lines",
                               name="NASDAQ", line={"color": "#888"}))
-    nfig.update_layout(height=300, margin={"l": 0, "r": 0, "t": 30, "b": 0},
+    nfig.update_layout(height=260, margin={"l": 0, "r": 0, "t": 30, "b": 0},
                        title=f"{config.BENCHMARK_TICKER} — same window")
     st.plotly_chart(nfig, use_container_width=True)
-    if tdf is not None and not tdf.empty:
-        st.dataframe(
-            tdf[["date", "action", "position", "amount_eur"]]
-            .rename(columns={"amount_eur": "amount_eur (gross)"})
-            .style.format({"amount_eur (gross)": "€{:,.0f}",
-                           "date": lambda d: d.strftime("%Y-%m-%d")}),
-            width="stretch", hide_index=True,
-        )
+
     n = 0 if tdf is None or tdf.empty else len(tdf)
-    st.caption(
-        f"{n} trade(s) on {stock} over the validation window · markers at the asset "
-        "close on the trade date. **position**: stock/2x/3x for riskiest-first "
-        "drawdown de-risk; *all (pro-rata)* for trims and rebalances (sold across "
-        "tiers proportionally). The book starts fully at the base case, so calm "
-        "windows show mostly sells — buys fire only on crisis dip-buys or re-entry "
-        "after a de-risk."
-    )
+    with st.popover(f"Show buys & sells ({n})", use_container_width=True):
+        if tdf is not None and not tdf.empty:
+            st.dataframe(
+                tdf[["date", "action", "position", "amount_eur"]]
+                .rename(columns={"amount_eur": "amount_eur (gross)"})
+                .style.format({"amount_eur (gross)": "€{:,.0f}",
+                               "date": lambda d: d.strftime("%Y-%m-%d")}),
+                width="stretch", hide_index=True,
+            )
+            st.caption("**position**: stock/2x/3x for the riskiest-first de-risk and the "
+                       "33% trim; *all (pro-rata)* for the routine rebalance.")
+        else:
+            st.write(f"No trades on {stock} over the validation window.")
+
+
+_TIER_COLOR = {"stock": "#1f77b4", "2x": "#ff7f0e", "3x": "#d62728"}
+
+
+def _render_tier_balances(tier_curve, stock: str, start, end) -> None:
+    """Balance (EUR) evolution of each leverage tier of ``stock`` over the window."""
+    import plotly.graph_objects as go
+
+    if (tier_curve is None or tier_curve.empty
+            or stock not in tier_curve.columns.get_level_values("ticker")):
+        st.info("Per-tier balances unavailable — press **Run / refresh**.")
+        return
+    sub = tier_curve[stock].loc[start:end]
+    order = [t for t in ("stock", "2x", "3x") if t in sub.columns]
+    fig = go.Figure()
+    for tier in order:
+        fig.add_trace(go.Scatter(x=sub.index, y=sub[tier].values, mode="lines",
+                                 name=tier, line={"color": _TIER_COLOR.get(tier)}))
+    fig.update_layout(height=300, margin={"l": 0, "r": 0, "t": 30, "b": 0},
+                      yaxis_title="balance (€)",
+                      title=f"{stock} — balance per tier (stock / 2x / 3x)")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 if __name__ == "__main__":

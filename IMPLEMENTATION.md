@@ -196,11 +196,13 @@ history (no historical news feed) and filled live at forecast time.
   from `auto_adjust=False`); `state.pay_dividends` credits cash on **tier-1 lots
   only** (Story.md: not the leveraged positions), net of the flat 25% tax. Wired into
   both the rules and forecast backtests.
-- **Trade log** — `rules.Trade` carries `date`/`tier`; the forecast backtest collects
-  every buy/sell (trims, de-risk, crisis dip-buys, rebalances) into
-  `BacktestResult.trades`. Surfaced in the **Strategy tab** (per-asset markers + tier
-  on the price curve, NASDAQ below, interactive Plotly; tier-specific for de-risk **and
-  the 33% trim**, "all (pro-rata)" for the routine confidence-rebalance).
+- **Trade log + per-tier balances** — `rules.Trade` carries `date`/`tier`; the forecast
+  backtest collects every buy/sell into `BacktestResult.trades` and records each day's
+  per-`(ticker, tier)` value into `BacktestResult.tier_curve`. The **Strategy tab** shows,
+  per asset: the price curve with buy/sell markers, a **per-tier balance-evolution chart**
+  (stock / 2x / 3x from `tier_curve`), NASDAQ below, and the buy/sell table behind a
+  **popover button** (tier-specific for de-risk **and the 33% trim**, "all (pro-rata)"
+  for the routine confidence-rebalance).
 - **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
   the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
   price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
