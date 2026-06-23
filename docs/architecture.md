@@ -100,6 +100,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`forecast.py`** — `forecast()` enumerates buy/sell × leverage candidates per
   stock, scores them, and keeps the best above `threshold` (else hold). Emits the
   five Story.md fields via the `Forecast` dataclass; `forecasts_to_frame()` tabulates.
+  `apply_book_limits()` (applied after the overlay) caps each buy at the remaining cash
+  and each sell at the held tier value, dropping unfundable actions (Story.md: buy only
+  with cash on hand, sell only from open positions).
 - **`overlay.py`** — live analyst/sentiment overlay on the forecast (**live-only**, not
   backtested — these signals have no history). `sentiment_tilt` (recommendation mean +
   EPS-revision momentum + price-vs-target) scales confidence/amount; `risk_gate`
@@ -114,12 +117,15 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `pay_dividends()` credits cash on tier-1 (underlying) lots only, net of flat tax
   (Story.md: leveraged lots earn no dividend); `build_base_case()` constructs the
   Story.md 90/10 book (per-name 12%/3%/3%).
-- **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a realized-loss carry
-  that offsets future gains before tax.
+- **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a single
+  **full-portfolio** realized-loss carry pool (never expiring) that offsets future gains
+  before tax, so gains and losses net across the whole book over time (Story.md).
 - **`rules.py`** — deterministic sell-side guardrails returning dated `Trade`s
-  (`ticker, action, amount_eur, tier, date`): per-name trim (33%→3%), drawdown de-risk
-  (>20%→cash, **riskiest tier first** 3x→2x→stock via `state.sell_tier`), 10%/day sell
-  cap; `apply_guardrails()` runs them per day. (A vol-aware leverage throttle was
+  (`ticker, action, amount_eur, tier, date`): per-name trim (33%→3%) and drawdown
+  de-risk (>20%→cash) both shed the **riskiest tier first** (3x→2x→stock) via the shared
+  `sell_riskiest_first` (built on `state.sell_tier`), within a 10%/day sell cap;
+  `apply_guardrails()` runs them per day. (The routine confidence-rebalance in
+  `backtest.engine` sells pro-rata instead — grading it cost ~5pp; IMPLEMENTATION §5c.) (A vol-aware leverage throttle was
   evaluated here and dropped — walk-forward showed it hurt; see IMPLEMENTATION §5c.)
   The crisis buy-the-dip path lives in `backtest.engine` (`_is_crisis`/`_deploy`).
 
@@ -156,9 +162,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`streamlit_app.py`** — UI in three tabs: **Current market** (the *actual*
   end-of-backtest book from `BacktestResult.final_state` — real per-tier values and live
   cash level, not the static template; Plotly donut; cross-asset correlation with three
-  views — 5 stocks vs NASDAQ / all assets / one stock vs all as a point chart; a
-  simplified analyst/sentiment summary — rating, news tone, target upside), **Forecast &
-  Backtest** (5-field forecast, portfolio-vs-NASDAQ curve, feature importances),
+  views — 5 stocks vs NASDAQ / all assets / one stock vs all as a point chart — and a
+  ticker→name legend popover; a simplified analyst/sentiment summary — rating, news tone,
+  target upside), **Forecast & Backtest** (5-field forecast sized to the live book,
+  portfolio-vs-NASDAQ curve as cumulative %, feature importances),
   **Strategy** (per-asset buy/sell markers with position tier on the price curve from
   `BacktestResult.trades`, plus a per-asset trade table, NASDAQ below — interactive
   Plotly). Cached via `st.cache_data`.

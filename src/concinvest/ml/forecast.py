@@ -7,7 +7,7 @@ clears a threshold. Base case is *hold* — most days produce no trade.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -74,6 +74,29 @@ def forecast(
                 confidence=round(float(conf[best]), 4),
             )
         )
+    return out
+
+
+def apply_book_limits(
+    forecasts: list[Forecast],
+    cash: float,
+    held: dict[tuple[str, str], float],
+) -> list[Forecast]:
+    """Cap each action by the live book (Story.md: buy only with cash on hand, sell only
+    from open positions). A buy is clamped to the *remaining* cash (decremented as buys
+    are funded); a sell is clamped to the value held in that name's leverage tier.
+    Actions that can't be funded are dropped. Applied after the sentiment overlay."""
+    remaining = cash
+    out: list[Forecast] = []
+    for fc in forecasts:
+        if fc.action == "buy":
+            amount = min(fc.amount_eur, remaining)
+            remaining -= amount
+        else:
+            amount = min(fc.amount_eur, held.get((fc.ticker, fc.leverage), 0.0))
+        if amount <= 0:
+            continue
+        out.append(replace(fc, amount_eur=round(amount, 2)))
     return out
 
 

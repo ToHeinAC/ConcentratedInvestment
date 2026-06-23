@@ -43,25 +43,35 @@ def _tier_value(state: PortfolioState, ticker: str, tier: int) -> float:
     return sum(lot.value for lot in state.lots if lot.ticker == ticker and lot.tier == tier)
 
 
-def _capped_sell(state: PortfolioState, ticker: str, target: float) -> Trade | None:
-    """Sell ``target`` EUR of ``ticker``, clamped to the 10%/day cap and holdings."""
-    cap = config.MAX_DAILY_SELL * state.total_value()
-    gross = min(target, cap, state.name_value(ticker))
-    if gross <= 0:
-        return None
-    state.sell_name(ticker, gross)
-    return Trade(ticker, "sell", gross)
+def sell_riskiest_first(
+    state: PortfolioState, ticker: str, budget: float
+) -> list[Trade]:
+    """Sell up to ``budget`` EUR of ``ticker`` from the **riskiest tier first**
+    (3x → 2x → stock), each clamped to holdings. The most damaging leverage is shed
+    before the underlying — so a crash sheds 3x first, and an upstreak trim also comes
+    out of the leveraged tiers first. Returns one dated-less ``Trade`` per tier sold."""
+    trades: list[Trade] = []
+    for tier in (3, 2, 1):
+        if budget <= 0:
+            break
+        gross = min(_tier_value(state, ticker, tier), budget)
+        if gross <= 0:
+            continue
+        if state.sell_tier(ticker, tier, gross) > 0:
+            trades.append(Trade(ticker, "sell", gross, tier=tier))
+            budget -= gross
+    return trades
 
 
 def trim_overweight(state: PortfolioState) -> list[Trade]:
-    """Trim 3% of portfolio from any name exceeding the 33% per-name cap."""
+    """Trim 3% of portfolio from any name exceeding the 33% per-name cap, shedding the
+    riskiest tier first and respecting the 10%/day sell cap."""
     total = state.total_value()
     trades: list[Trade] = []
     for ticker in _names(state):
         if state.name_value(ticker) > config.PER_NAME_CAP * total:
-            trade = _capped_sell(state, ticker, config.TRIM_FRACTION * total)
-            if trade:
-                trades.append(trade)
+            budget = min(config.TRIM_FRACTION * total, config.MAX_DAILY_SELL * total)
+            trades += sell_riskiest_first(state, ticker, budget)
     return trades
 
 
@@ -78,15 +88,7 @@ def drawdown_derisk(state: PortfolioState) -> list[Trade]:
     trades: list[Trade] = []
     for ticker in _names(state):
         budget = config.MAX_DAILY_SELL * state.total_value()  # 10%/name/day (Story.md)
-        for tier in (3, 2, 1):
-            if budget <= 0:
-                break
-            gross = min(_tier_value(state, ticker, tier), budget)
-            if gross <= 0:
-                continue
-            if state.sell_tier(ticker, tier, gross) > 0:
-                trades.append(Trade(ticker, "sell", gross, tier=tier))
-                budget -= gross
+        trades += sell_riskiest_first(state, ticker, budget)
     return trades
 
 

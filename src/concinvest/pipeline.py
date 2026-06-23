@@ -137,6 +137,19 @@ def _live_snapshots(
     return snapshots
 
 
+def _book_cash_held(state) -> tuple[float, dict[tuple[str, str], float]]:
+    """(cash, {(ticker, leverage_label): held value}) from the backtest's final book,
+    for sizing the live forecast. Falls back to the base €100k cash / empty book."""
+    if state is None:
+        return config.INITIAL_CAPITAL_EUR, {}
+    label = {1: "stock", 2: "2x", 3: "3x"}
+    held: dict[tuple[str, str], float] = {}
+    for lot in state.lots:
+        key = (lot.ticker, label[lot.tier])
+        held[key] = held.get(key, 0.0) + lot.value
+    return state.cash, held
+
+
 def _correlation_matrix(raw_closes: dict[str, pd.Series], window: int = 60) -> pd.DataFrame:
     df = pd.DataFrame({t: s for t, s in raw_closes.items()})
     df.index = pd.to_datetime(df.index)
@@ -166,22 +179,27 @@ def run_phase1(
     X_tr, y_tr, _, _ = dataset.train_validate_split(X, y)
     trained = (model.tune_and_train(X_tr, y_tr) if tune else model.train(X_tr, y_tr))
 
-    # Live analyst/sentiment, then forecast from the latest snapshots. The sentiment
-    # overlay tilts the live forecast only (these signals have no history to backtest).
-    sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
-                    if with_sentiment else pd.DataFrame())
-    snaps = _live_snapshots(panel, sentiment_df)
-    forecasts = forecast.forecast(trained, snaps)
-    latest_close = {t: float(df["close"].iloc[-1]) for t, df in market.items()}
-    forecasts = overlay.apply_overlay(forecasts, sentiment_df, latest_close)
-
     # Rules + forecast backtest over the validation window (last VALIDATION_YEARS).
+    # Run it first so the live forecast can be sized against the evolved book (cash on
+    # hand + open positions), not a notional €100k.
     val_start = (pd.Timestamp(market[next(iter(market))].index[-1])
                  - pd.DateOffset(years=config.VALIDATION_YEARS)).strftime("%Y-%m-%d")
     nasdaq = (raw[config.BENCHMARK_TICKER]["close"]
               if config.BENCHMARK_TICKER in raw
               else pd.DataFrame({t: df["close"] for t, df in market.items()}).mean(axis=1))
     bt = run_forecast_backtest(market, nasdaq, trained, panel, start=val_start)
+
+    # Live analyst/sentiment, then forecast from the latest snapshots. The sentiment
+    # overlay tilts the live forecast only (these signals have no history to backtest);
+    # apply_book_limits then caps buys at cash and sells at the held tier (Story.md).
+    sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
+                    if with_sentiment else pd.DataFrame())
+    snaps = _live_snapshots(panel, sentiment_df)
+    book_value = bt.final_state.total_value() if bt.final_state else config.INITIAL_CAPITAL_EUR
+    forecasts = forecast.forecast(trained, snaps, portfolio_value=book_value)
+    latest_close = {t: float(df["close"].iloc[-1]) for t, df in market.items()}
+    forecasts = overlay.apply_overlay(forecasts, sentiment_df, latest_close)
+    forecasts = forecast.apply_book_limits(forecasts, *_book_cash_held(bt.final_state))
 
     corr = _correlation_matrix({t: df["close"] for t, df in raw.items()})
     return Phase1Result(

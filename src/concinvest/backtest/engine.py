@@ -222,6 +222,9 @@ def _rebalance_names_to_target(
         move = min(abs(dev), config.MAX_DAILY_SELL) * total  # cap daily turnover
         if dev > 0:
             trades += _deploy_name(state, ticker, move)
+        # Routine confidence-rebalance sells pro-rata across tiers (keeps the leverage
+        # edge in up-markets); tier-graded shedding is reserved for the two de-risking
+        # events Story.md names — the crash drawdown and the post-upstreak 33% trim.
         elif state.sell_name(ticker, move) > 0:
             trades.append(rules.Trade(ticker, "sell", move))
     return trades

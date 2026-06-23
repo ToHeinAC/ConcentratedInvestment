@@ -67,6 +67,14 @@ def test_trim_fires_above_per_name_cap():
     assert abs(trades[0].amount_eur - config.TRIM_FRACTION * total) < 1e-6  # 3% of 100
 
 
+def test_trim_sheds_riskiest_tier_first():
+    st = state.PortfolioState(cash=0.0, high_water=100.0)
+    # A is 40% (>33%): stock 30 + 3x 10; the trim should come out of the 3x first.
+    st.lots = [state.Lot("A", 1, 30.0, 30.0), state.Lot("A", 3, 10.0, 10.0)]
+    trades = rules.trim_overweight(st)
+    assert trades[0].tier == 3
+
+
 def test_no_trim_when_balanced():
     st = state.build_base_case(100_000.0, stocks=["A", "B", "C", "D", "E"])
     assert rules.trim_overweight(st) == []  # each name 18% < 33%

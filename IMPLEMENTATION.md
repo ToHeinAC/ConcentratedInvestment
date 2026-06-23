@@ -128,15 +128,21 @@ history (no historical news feed) and filled live at forecast time.
   | 2022-08→2023-07 | +46.9% | +13.1% | **+33.8** |
   | 2023-07→2024-07 | +27.1% | +31.5% | −4.4 |
   | 2024-07→2025-07 | +13.7% | +11.3% | **+2.4** |
-  | 2025-07→2026-06 | +29.3% | +28.2% | **+1.2** |
+  | 2025-07→2026-06 | +29.5% | +28.2% | **+1.3** |
 
-  **Win rate 75% (3/4), mean outperformance +8.2%** (per-stock rebalance). The strategy
+  **Win rate 75% (3/4), mean outperformance +8.3%** (per-stock rebalance). The strategy
   is high-variance: it crushed the 2022-23 value/commodity rotation. The crisis path
   (§5d) flipped the former worst window (2024-25) from −20.2% to a win, and the
   **per-stock confidence rebalance** (each name trimmed by its own forecast, not a
   basket-mean dial) lifted the win rate from 2/4 to 3/4 and mean outperformance from
-  +5.7% to +8.2% — the worst window's shortfall roughly halved (−11.0 → −4.4). (Numbers
+  +5.7% to +8.3% — the worst window's shortfall roughly halved (−11.0 → −4.4). (Numbers
   vary run-to-run with the synthetic sample.)
+- **Tier-graded de-risking scope** — shedding the riskiest tier first (3x → 2x → stock)
+  is applied to the two Story.md de-risking events — the crash drawdown and the 33%
+  post-upstreak trim — and is **performance-neutral** there (75%/+8.3% unchanged).
+  Applying it to the *routine* confidence-rebalance instead cost ~5pp (fell to 50%/+3.3%)
+  by de-levering in up-markets, so that path stays pro-rata — consistent with the
+  earlier Lever-1 lesson (this basket's edge is its leverage in up-markets).
 - **Risk-lever experiment** — two levers were evaluated to make the win more robust.
   **Lever 2 (leverage-aware de-risk)** — drawdown de-risk now sells the riskiest tier
   first (3x → 2x → stock) via `state.sell_tier`, keeping the Story.md 10%/name/day cap;
@@ -158,11 +164,17 @@ history (no historical news feed) and filled live at forecast time.
   `sell_name()` realizes gains proportionally and pays tax. `build_base_case()` is the
   90/10 book (per-name 12%/3%/3%).
 - **`tax.tax_on_sale`** — 25% flat Abgeltungsteuer; realized losses accumulate in a
-  carry pool that offsets future gains before tax.
-- **`rules`** — deterministic sell-side guardrails: 33% per-name → trim 3%; 20%
-  drawdown → de-risk toward cash (drawing each name's daily sell from the **riskiest
-  tier first**, 3x → 2x → stock, via `state.sell_tier`); every sell capped at 10%/day.
-  `apply_guardrails` runs them per day (de-risk, then trim).
+  **full-portfolio** carry pool (one pool across all names, never expiring) that offsets
+  future gains before tax — i.e. gains and losses net across the whole book over time
+  (Story.md). (Only nuance vs. German law: a loss does not retroactively refund tax on a
+  gain realized *earlier* the same year — a second-order effect.)
+- **`rules`** — deterministic sell-side guardrails, both shedding the **riskiest tier
+  first** (3x → 2x → stock, via `sell_riskiest_first`): 33% per-name → trim 3% (the
+  post-upstreak case), 20% drawdown → de-risk toward cash (the crash case); every sell
+  capped at 10%/day. `apply_guardrails` runs them per day (de-risk, then trim). The
+  routine confidence-rebalance (in `backtest.engine`) sells **pro-rata** across tiers,
+  preserving the leverage edge in up-markets (tier-grading there cost ~5pp in the
+  walk-forward — §5c).
 - **`backtest.run_rules_backtest`** — replays the base-case leveraged book under the
   guardrails vs NASDAQ (sell-side only).
 - **`backtest.run_forecast_backtest`** — **each name's** target portfolio fraction
@@ -187,21 +199,27 @@ history (no historical news feed) and filled live at forecast time.
 - **Trade log** — `rules.Trade` carries `date`/`tier`; the forecast backtest collects
   every buy/sell (trims, de-risk, crisis dip-buys, rebalances) into
   `BacktestResult.trades`. Surfaced in the **Strategy tab** (per-asset markers + tier
-  on the price curve, NASDAQ below, interactive Plotly; tier-specific for de-risk,
-  "all (pro-rata)" for trims/rebalances).
+  on the price curve, NASDAQ below, interactive Plotly; tier-specific for de-risk **and
+  the 33% trim**, "all (pro-rata)" for the routine confidence-rebalance).
 - **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
   the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
   price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
   leverage tier on crash fear. **Live-only** — these signals have no history, so the
   overlay is *not* in the backtest/walk-forward. Next step to make them trainable: the
   Phase 5 cron snapshots `sentiment_analyst` daily to accumulate history.
+- **Book-aware forecast sizing** — `run_phase1` runs the backtest first, then sizes the
+  live forecast against the evolved book: `forecast.apply_book_limits` caps each buy at
+  the **remaining cash** (decremented as buys are funded) and each sell at the **value
+  held in that name's tier** (Story.md: buy only with cash on hand, sell only from open
+  positions), dropping unfundable actions. (The backtest already enforced cash via
+  `state.buy`; this brings the displayed 5-field forecast in line.)
 - **Open** — basket/benchmark review (the real outperformance lever, §5c).
 
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 61 tests, offline (synthetic fixtures)
+uv run pytest                                   # 63 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
@@ -223,7 +241,8 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   backtests + trade-log recording, crisis-drop detection, underlying-only dividends,
   leading-holiday benchmark gap, sentiment overlay (tilt/gate/leverage cap),
   walk-forward window construction, daily-ETL sentiment-history accumulation,
-  per-stock target fraction + independent-name rebalance, backtest final-state.
+  per-stock target fraction + independent-name rebalance, backtest final-state,
+  riskiest-tier-first trim, forecast book-limits (cash/holdings caps).
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button

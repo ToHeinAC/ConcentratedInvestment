@@ -84,6 +84,21 @@ def test_train_and_forecast_five_fields(synth_market, synth_raw):
     assert f.amount_eur > 0
 
 
+def test_apply_book_limits_caps_buys_at_cash_and_sells_at_holdings():
+    fcs = [
+        forecast.Forecast("A", "buy", 10_000.0, "stock", 0.7),
+        forecast.Forecast("B", "buy", 10_000.0, "2x", 0.6),    # cash partly exhausted
+        forecast.Forecast("C", "sell", 10_000.0, "3x", 0.8),   # only 2k held -> capped
+        forecast.Forecast("D", "sell", 5_000.0, "stock", 0.6),  # nothing held -> dropped
+    ]
+    out = forecast.apply_book_limits(fcs, cash=12_000.0, held={("C", "3x"): 2_000.0})
+    by = {f.ticker: f.amount_eur for f in out}
+    assert by["A"] == 10_000.0          # funded in full
+    assert by["B"] == 2_000.0           # only remaining cash after A
+    assert by["C"] == 2_000.0           # capped to the held 3x value
+    assert "D" not in by                # no position to sell
+
+
 def test_rules_backtest_produces_curve(synth_market, synth_raw):
     bench = synth_raw["^IXIC"]["close"]
     bench.index = pd.to_datetime(list(bench.index))
@@ -115,7 +130,7 @@ def test_rebalance_names_handles_each_name_independently():
     targets = {"A": engine._target_name_fraction(0.25),
                "B": engine._target_name_fraction(0.5)}
     trades = engine._rebalance_names_to_target(st, targets, ["A", "B"])
-    assert [t.ticker for t in trades] == ["A"]
+    assert [t.ticker for t in trades] == ["A"]  # only the bearish name is trimmed
     assert trades[0].action == "sell"
 
 

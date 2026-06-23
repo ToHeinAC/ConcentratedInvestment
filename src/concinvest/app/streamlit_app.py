@@ -173,7 +173,14 @@ def _render_current(data: dict) -> None:
 
 def _render_correlation(corr: pd.DataFrame) -> None:
     """Cross-asset correlation (recent 60 days) with three selectable views."""
-    st.subheader("Cross-asset correlation (recent 60 days)")
+    head, legend = st.columns([4, 1])
+    head.subheader("Cross-asset correlation (recent 60 days)")
+    with legend.popover("Ticker legend", use_container_width=True):
+        st.dataframe(
+            pd.DataFrame({"ticker": list(corr.columns),
+                          "name": [tickers.NAMES.get(t, t) for t in corr.columns]}),
+            width="stretch", hide_index=True, height=400,
+        )
     view = st.radio("View", ["5 stocks vs NASDAQ", "All assets", "One stock vs all"],
                     horizontal=True, label_visibility="collapsed")
     grad = {"cmap": "RdYlGn", "vmin": -1, "vmax": 1}
@@ -255,7 +262,9 @@ def _render_forecast(data: dict) -> None:
         f"{data['portfolio_return'] - data['benchmark_return']:+.1%}",
         delta="beats benchmark" if data["beats"] else "below benchmark",
     )
-    st.line_chart(data["curve"])
+    curve = data["curve"]
+    pct = (curve / curve.iloc[0] - 1.0) * 100.0  # cumulative % return, both rebased to 0
+    st.line_chart(pct, y_label="cumulative return (%)")
     st.caption(f"Model CV ROC-AUC (mean): {data['mean_cv']:.3f}")
 
     st.subheader("Feature importance")
