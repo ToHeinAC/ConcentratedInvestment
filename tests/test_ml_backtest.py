@@ -108,6 +108,30 @@ def test_is_crisis_detects_sharp_drop():
     assert not engine._is_crisis(crash, 3)  # too early: lookback not yet filled
 
 
+def test_benchmark_curve_handles_leading_holiday_gap():
+    # Window opens on a date the benchmark didn't trade (leading NaN after reindex).
+    dates = pd.date_range("2025-07-04", periods=5, freq="D")
+    bench = pd.Series([100.0, 110.0], index=pd.to_datetime(["2025-07-07", "2025-07-08"]))
+    curve = engine._benchmark_curve(bench, dates)
+    assert not curve.isna().any()  # leading NaN back-filled, not propagated
+    assert curve.iloc[0] == config.INITIAL_CAPITAL_EUR  # rebased to first known price
+
+
+def test_dividend_yields_recover_total_minus_price_return(synth_market):
+    import numpy as np
+
+    # Give one stock a dividend-bearing adj_close compounding 0.1%/day above price.
+    t = next(iter(synth_market))
+    df = synth_market[t].copy()
+    df["adj_close"] = df["close"].values * np.cumprod(np.full(len(df), 1.001))
+    synth_market[t] = df
+    dates = pd.to_datetime(list(df.index))
+    divs = engine._dividend_yields(synth_market, dates)
+    # The doctored name yields ~0.1%/day; others (adj_close == close) yield 0.
+    assert abs(divs[t].iloc[1:].mean() - 0.001) < 1e-4
+    assert (divs.drop(columns=[t]).to_numpy() == 0.0).all()
+
+
 def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=4)

@@ -47,6 +47,16 @@ def test_sell_realizes_gain_net_of_tax():
     assert st.lots == []
 
 
+def test_dividends_pay_underlying_only_net_of_tax():
+    st = state.PortfolioState(cash=0.0, high_water=200.0)
+    st.lots = [state.Lot("A", 1, 100.0, 1000.0), state.Lot("A", 3, 100.0, 1000.0)]
+    net = st.pay_dividends({"A": 0.02})  # 2% dividend day
+    # Only the tier-1 lot pays: 1000 * 0.02 = 20 gross, net of 25% tax = 15.
+    expected = 1000.0 * 0.02 * (1.0 - config.CAPITAL_GAINS_TAX_RATE)
+    assert abs(net - expected) < 1e-9
+    assert abs(st.cash - expected) < 1e-9
+
+
 # --- rules ---------------------------------------------------------------
 def test_trim_fires_above_per_name_cap():
     st = state.PortfolioState(cash=30.0, high_water=100.0)

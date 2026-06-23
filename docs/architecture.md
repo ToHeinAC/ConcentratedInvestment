@@ -105,7 +105,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`state.py`** — `PortfolioState` (cash + leveraged `Lot`s with cost basis,
   `loss_carry`, `high_water`). `mark()` applies daily constant-leverage returns;
   `buy()`/`sell_name()` open lots and realize tax-adjusted proceeds;
-  `build_base_case()` constructs the Story.md 90/10 book (per-name 12%/3%/3%).
+  `pay_dividends()` credits cash on tier-1 (underlying) lots only, net of flat tax
+  (Story.md: leveraged lots earn no dividend); `build_base_case()` constructs the
+  Story.md 90/10 book (per-name 12%/3%/3%).
 - **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a realized-loss carry
   that offsets future gains before tax.
 - **`rules.py`** — deterministic sell-side guardrails returning `Trade`s: per-name
@@ -125,7 +127,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   drop > `CRISIS_DROP` over `CRISIS_LOOKBACK` days) overrides this for
   `CRISIS_REVERT_DAYS`: it `_deploy`s the cash reserve to ~100% invested (buy-the-dip)
   and holds — no de-risk/rebalance-to-cash — then reverts to base (Story.md crisis
-  rule). The per-name trim still fires in crisis.
+  rule). The per-name trim still fires in crisis. `_dividend_yields` recovers each
+  day's underlying dividend yield (`adj_close` minus `close` return) and
+  `state.pay_dividends` credits it to the tier-1 lots; `_benchmark_curve` ffills
+  interior gaps and bfills a leading NaN (window opening on a benchmark holiday).
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`

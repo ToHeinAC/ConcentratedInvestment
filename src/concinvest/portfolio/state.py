@@ -45,6 +45,18 @@ class PortfolioState:
             lot.value *= 1.0 + lot.tier * returns.get(lot.ticker, 0.0)
         self.high_water = max(self.high_water, self.total_value())
 
+    def pay_dividends(
+        self, yields: dict[str, float], rate: float = config.CAPITAL_GAINS_TAX_RATE
+    ) -> float:
+        """Credit cash with dividends on the underlying (tier-1) lots only, net of the
+        flat tax. Leveraged lots (tier > 1) receive no dividend (Story.md)."""
+        gross = sum(
+            lot.value * yields.get(lot.ticker, 0.0) for lot in self.lots if lot.tier == 1
+        )
+        net = gross * (1.0 - rate)
+        self.cash += net
+        return net
+
     def buy(self, ticker: str, tier: int, amount_eur: float) -> float:
         """Open a lot funded by cash (clamped to available cash). Returns invested EUR."""
         amount = min(amount_eur, self.cash)

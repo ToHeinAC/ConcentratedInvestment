@@ -84,11 +84,36 @@ def run_backtest(
     return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret)
 
 
+def _dividend_yields(
+    market: dict[str, pd.DataFrame], dates: pd.DatetimeIndex
+) -> pd.DataFrame:
+    """Per-day dividend yield per stock = total-return minus price return.
+
+    With ``auto_adjust=False``, ``adj_close`` is the dividend/split-adjusted total
+    return while ``close`` is price-only, so their daily return difference recovers
+    the dividend yield (Story.md: dividends accrue to the underlying only). Stocks
+    without an ``adj_close`` column contribute zero.
+    """
+    cols = {}
+    for ticker, df in market.items():
+        if "adj_close" not in df.columns:
+            continue
+        idx = pd.to_datetime(df.index)
+        adj = pd.Series(df["adj_close"].values, index=idx).pct_change()
+        price = pd.Series(df["close"].values, index=idx).pct_change()
+        cols[ticker] = (adj - price).clip(lower=0.0)
+    if not cols:
+        return pd.DataFrame(index=dates)
+    return pd.DataFrame(cols).reindex(dates).fillna(0.0)
+
+
 def _benchmark_curve(benchmark_close: pd.Series, dates: pd.DatetimeIndex) -> pd.Series:
     """NASDAQ buy-and-hold rebased to the initial capital over ``dates``."""
     bench = benchmark_close.copy()
     bench.index = pd.to_datetime(bench.index)
-    bench = bench.reindex(dates).ffill()
+    # ffill interior gaps; bfill a leading NaN when the window opens on a date the
+    # benchmark didn't trade (e.g. a US holiday while EU/JP stocks traded).
+    bench = bench.reindex(dates).ffill().bfill()
     return config.INITIAL_CAPITAL_EUR * (bench / bench.iloc[0])
 
 
@@ -113,10 +138,12 @@ def run_rules_backtest(
     rets = closes.pct_change().fillna(0.0)
     dates = pd.DatetimeIndex(rets.index)
 
+    divs = _dividend_yields(market, dates)
     state = pstate.build_base_case(capital, stocks=list(market))
     values: list[float] = []
-    for _, row in rets.iterrows():
+    for date, row in rets.iterrows():
         state.mark(row.to_dict())
+        state.pay_dividends(divs.loc[date].to_dict() if date in divs.index else {})
         rules.apply_guardrails(state)
         values.append(state.total_value())
 
@@ -207,12 +234,14 @@ def run_forecast_backtest(
 
     exposure = _daily_exposure(model, panel, dates)  # mean buy-confidence, lagged
     basket_ret = rets.mean(axis=1)  # equal-weight basket return, for crisis detection
+    divs = _dividend_yields(market, dates)
     stocks = list(market)
     state = pstate.build_base_case(capital, stocks=stocks)
     crisis_day: int | None = None
     values: list[float] = []
     for i, (date, row) in enumerate(rets.iterrows()):
         state.mark(row.to_dict())
+        state.pay_dividends(divs.loc[date].to_dict() if date in divs.index else {})
         rules.trim_overweight(state)  # per-name cap applies even in crisis
         in_crisis = crisis_day is not None and (i - crisis_day) < config.CRISIS_REVERT_DAYS
         if not in_crisis:

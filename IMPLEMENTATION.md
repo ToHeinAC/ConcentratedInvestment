@@ -36,7 +36,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 | **1** | Thin end-to-end slice (all layers, sentiment-aware) | ✅ done |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
 | **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | 🔄 in progress |
-| **4** | Full rules engine (allocation/risk/leverage/drawdown/trim) + German tax, in backtest | 🔄 in progress |
+| **4** | Full rules engine (allocation/risk/leverage/drawdown/trim/crisis) + German tax + dividends, in backtest | ✅ done |
 | **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | ⏳ planned |
 
 ## 4. Architecture (implemented)
@@ -117,25 +117,25 @@ history (no historical news feed) and filled live at forecast time.
   linear-confidence one).
 - **Walk-forward validation** (`concinvest validate`, `backtest.walkforward`) — the
   single-year read is misleading. Across four trained-then-tested 1-year windows
-  (`--n 10000`, with the Phase 4 crisis path active):
+  (`--n 10000`, with the Phase 4 crisis path + underlying dividends active):
 
   | window | portfolio | NASDAQ | vs |
   |--------|-----------|--------|----|
-  | 2022-08→2023-07 | +45.2% | +11.9% | **+33.4** |
-  | 2023-07→2024-07 | +21.5% | +30.2% | −8.7 |
-  | 2024-07→2025-07 | +8.1% | +10.4% | −2.3 |
-  | 2025-07→2026-06 | +25.7% | +28.6% | −2.9 |
+  | 2022-08→2023-07 | +49.3% | +13.1% | **+36.2** |
+  | 2023-07→2024-07 | +20.4% | +31.5% | −11.0 |
+  | 2024-07→2025-07 | +8.1% | +11.3% | −3.2 |
+  | 2025-07→2026-06 | +29.2% | +28.2% | **+1.0** |
 
-  **Win rate 25% (1/4), mean outperformance +4.8%.** The strategy is high-variance:
+  **Win rate 50% (2/4), mean outperformance +5.7%.** The strategy is high-variance:
   it crushed the 2022-23 value/commodity rotation. The crisis path (§5d) flipped the
-  worst window (2024-25) from −20.2% to **+8.1%** — the buy-the-dip caught the
-  recovery within the 2-month window — lifting mean outperformance from −2.3% to
-  +4.8%, though the win rate is unchanged (the three losing windows now only narrowly
-  trail NASDAQ).
-- **Open** — "beat NASDAQ" is **closer but still not a robust win** (mean +4.8% is
-  carried by one +33pp window; the other three trail by ≤9pp). Honest next steps:
-  a basket/leverage review and faster/leverage-aware de-risk for *non-crash* declines
-  (the drawdown cap only nibbles at 10%/day) — not fitting one window.
+  former worst window (2024-25) from −20.2% to **+8.1%** — the buy-the-dip caught the
+  recovery within the 2-month window — and underlying dividends plus the
+  leading-holiday benchmark fix nudged the last window just ahead of NASDAQ, lifting
+  the win rate to 2/4 and mean outperformance to +5.7%.
+- **Open** — "beat NASDAQ" is now a **marginal win on average** (mean +5.7%, but still
+  one window trailing by 11pp). Honest next steps: a basket/leverage review and
+  faster/leverage-aware de-risk for *non-crash* declines (the drawdown cap only
+  nibbles at 10%/day) — not fitting one window.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -162,14 +162,19 @@ history (no historical news feed) and filled live at forecast time.
   drawdown de-risk. Story.md: "temporarily go 100% / 0% cash on a major pullback, back
   to base within 2 months." Lifted the worst walk-forward window from −20.2% to +8.1%
   (§5c).
-- **Open** — dividends on the underlying; faster/leverage-aware de-risk for non-crash
-  declines.
+- **Dividends on the underlying** — `_dividend_yields` recovers the per-day dividend
+  yield as `adj_close.pct_change() − close.pct_change()` (total minus price return,
+  from `auto_adjust=False`); `state.pay_dividends` credits cash on **tier-1 lots
+  only** (Story.md: not the leveraged positions), net of the flat 25% tax. Wired into
+  both the rules and forecast backtests.
+- **Open** — faster/leverage-aware de-risk for non-crash declines; basket/leverage
+  review.
 
 ## 6. Run & verify
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 45 tests, offline (synthetic fixtures)
+uv run pytest                                   # 48 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
@@ -181,8 +186,8 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
   train + 5-field forecast, backtest curve, portfolio state/tax/guardrails +
-  rules-based & forecast-driven backtests, crisis-drop detection, walk-forward
-  window construction.
+  rules-based & forecast-driven backtests, crisis-drop detection, underlying-only
+  dividends, leading-holiday benchmark gap, walk-forward window construction.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -196,11 +201,12 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
   (`concinvest validate`). Remaining: reach validation return > NASDAQ — walk-forward
   win rate is 25% (1/4), mean −2.3%; high variance with a −20% window where leverage
   out-ran the de-risk cap. Next is risk control + basket/leverage review (§5c).
-- **Phase 4** (🔄) — done: `portfolio/` `state.py` (leveraged lots + cash),
+- **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash),
   `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%, <10%/day
   sell, 20% drawdown→cash); `backtest.run_forecast_backtest` (confidence-driven
-  exposure + re-entry + guardrails + tax + crisis 100%/2-month-revert path), now
-  wired into the pipeline. Remaining: dividends on the underlying.
+  exposure + re-entry + guardrails + tax + crisis 100%/2-month-revert path + dividends
+  on the underlying), wired into the pipeline. Open follow-ups (not blocking):
+  faster/leverage-aware de-risk, basket/leverage review.
 - **Phase 5** — correlation/regime UI, `pipeline.fetch_and_store` daily cron, Docker.
 
 ## 8. Conventions
