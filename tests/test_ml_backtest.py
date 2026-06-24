@@ -374,13 +374,33 @@ def test_build_dated_book_per_tier_dates(synth_market):
     h1 = closes[closes.index >= early]
     lot1 = next(l for l in st.lots if l.tier == 1)
     assert abs(lot1.value - 1000.0 * h1.iloc[-1] / h1.iloc[0]) < 1e-6  # 1x from early date
-    # 3x marked from its own (later) buy date: daily-rebalanced 3x compounding.
+    # 3x marked from its own (later) buy date: simple leverage on the total return
+    # (invested * (1 + 3*perf)), not daily-rebalanced compounding.
     h3 = closes[closes.index >= late]
-    rets3 = h3.pct_change().fillna(0.0)
+    perf3 = h3.iloc[-1] / h3.iloc[0] - 1.0
     lot3 = next(l for l in st.lots if l.tier == 3)
-    assert abs(lot3.value - 1000.0 * (1.0 + 3.0 * rets3).cumprod().iloc[-1]) < 1e-6
+    assert abs(lot3.value - 1000.0 * (1.0 + 3.0 * perf3)) < 1e-6
     assert lot3.tp_basis == 1000.0  # take-profit reference starts at cost
     assert st.high_water >= st.total_value() - 1e-6  # peak of the marked book path
+
+
+def test_build_dated_book_high_water_never_below_current(synth_market):
+    # Regression: a lot bought *after* the last close has an empty price path; it must
+    # still count toward the high-water, else drawdown goes spuriously negative.
+    from concinvest import pipeline
+
+    t = next(iter(synth_market))
+    last = pd.Timestamp(synth_market[t].index[-1])
+    future = last + pd.Timedelta(days=5)  # beyond available data -> empty path, fallback
+    positions = [
+        {"ticker": t, "tier": 1, "invested_eur": 1000.0,
+         "buy_date": synth_market[t].index[len(synth_market[t]) // 2]},  # has a path
+        {"ticker": t, "tier": 3, "invested_eur": 1000.0, "buy_date": future},  # no path
+    ]
+    st = pipeline.build_dated_book(positions, synth_market, cash=0.0)
+    drawdown = (st.high_water - st.total_value()) / st.high_water
+    assert drawdown >= -1e-9  # never negative
+    assert st.high_water >= st.total_value() - 1e-6
 
 
 def test_portfolio_store_roundtrip(tmp_path):

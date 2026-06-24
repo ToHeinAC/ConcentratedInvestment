@@ -274,11 +274,15 @@ unless changed.
   dropdown lists saved portfolios from `data.portfolio_store` (named CSV **files** under
   `data/portfolios/`, one row per position + a cash row; or "New portfolio"); a 15-row
   grid holds the € **invested** and a **separate buy date for each position** (stock / 2x /
-  3x of each stock), plus cash; **💾 Save / update** persists it to the chosen file.
-  `pipeline.build_dated_book` derives each lot's **current value** (invested marked forward
-  from *its own* buy date by the daily-rebalanced constant-leverage model, `_lot_value_path`),
-  keeps the real **cost basis**, and computes the book's **high-water** (peak of the marked
-  book path) — shown as invested-vs-current metrics + a per-lot P&L table. A **Run live
+  3x of each stock; buy dates default to **today** so a fresh book starts at current ≈
+  invested), plus cash; **💾 Save / update** persists it to the chosen file.
+  `pipeline.build_dated_book` derives each lot's **current value** as `invested × (1 + tier ×
+  underlying-%-return-since-its-buy-date)` (simple leverage — the underlying move scaled by
+  leverage, no daily compounding; floored at €0, `_lot_value_path`), keeps the real **cost
+  basis**, and computes the book's **high-water** (peak of the marked book path, **always ≥
+  current** so drawdown can't go negative — incl. lots bought past their last close) — shown
+  as invested / current / drawdown metrics + a **Plotly pie** of current value per position.
+  A **Run live
   analysis** button calls `pipeline.recommend_for_portfolio`, which (reusing the already-
   trained model) fetches live news/sentiment, sizes the 5-field forecast to that book
   (`apply_book_limits`: buys ≤ cash, sells ≤ held), applies the sentiment overlay, and adds
@@ -305,7 +309,7 @@ unless changed.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 82 tests, offline (synthetic fixtures)
+uv run pytest                                   # 83 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest run --n 4000 --strategy aggressive   # the all-3x book (default: balanced)
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
@@ -332,8 +336,9 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
   underlying-dominance leverage trim, €500 min-trade skip (guardrails + forecast),
   forecast book-limits (cash/holdings caps), dated-book derivation
-  (`build_dated_book` — per-tier buy dates → leveraged current value + cost basis +
-  high-water), portfolio-store CSV save/load round-trip (per-position dates preserved),
+  (`build_dated_book` — per-tier buy dates → simple-leverage current value + cost basis +
+  high-water never below current → drawdown ≥ 0), portfolio-store CSV save/load round-trip
+  (per-position dates preserved),
   and user-book live recommendations (`recommend_for_portfolio` — actions fire +
   side-effect-free), safe-exit self-SIGTERM (own PID only),
   aggressive-strategy state (`sell_lot`, `tp_basis`, all-3x base case) + helpers

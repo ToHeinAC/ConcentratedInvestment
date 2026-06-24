@@ -209,34 +209,33 @@ _POS_TIER = {"stock": 1, "2x": 2, "3x": 3}  # editor position label -> tier
 _DEFAULT_INVESTED = {1: 9000.0, 2: 4500.0, 3: 4500.0}  # base-case sample € per tier
 
 
-def _default_entry_date(market: dict):
-    """One year before the latest close (clamped to the data start) — a sane default."""
-    last = max(pd.Timestamp(df.index[-1]) for df in market.values())
-    return max(pd.Timestamp(config.START_DATE), last - pd.DateOffset(years=1)).date()
+def _default_buy_date():
+    """Today — a new portfolio is entered "as it is right now", so current ≈ invested."""
+    return pd.Timestamp.today().normalize().date()
 
 
-def _default_positions(market: dict) -> pd.DataFrame:
+def _default_positions() -> pd.DataFrame:
     """Sample book: one row per (stock, tier) — the Story.md base case (9k/4.5k/4.5k),
-    each bought at the default entry date. Schema matches ``portfolio_store.POSITION_COLS``."""
-    entry = _default_entry_date(market)
+    each bought today. Schema matches ``portfolio_store.POSITION_COLS``."""
+    today = _default_buy_date()
     return pd.DataFrame(
         [{"ticker": t, "tier": tier, "invested_eur": _DEFAULT_INVESTED[tier],
-          "buy_date": pd.Timestamp(entry)}
+          "buy_date": pd.Timestamp(today)}
          for t in tickers.STOCKS for tier in (1, 2, 3)],
         columns=portfolio_store.POSITION_COLS,
     )
 
 
-def _positions_to_editor(positions: pd.DataFrame, market: dict) -> pd.DataFrame:
+def _positions_to_editor(positions: pd.DataFrame) -> pd.DataFrame:
     """Saved positions -> the 15-row editor grid (every stock × tier, missing → 0)."""
-    entry = _default_entry_date(market)
+    today = _default_buy_date()
     held = {(str(r.ticker), int(r.tier)): r for r in positions.itertuples()}
     rows = []
     for t in tickers.STOCKS:
         for label, tier in _POS_TIER.items():
             r = held.get((t, tier))
             bdate = (pd.Timestamp(r.buy_date).date()
-                     if r is not None and pd.notna(r.buy_date) else entry)
+                     if r is not None and pd.notna(r.buy_date) else today)
             rows.append({"Stock": t, "Name": tickers.NAMES.get(t, t), "Position": label,
                          "Invested €": float(r.invested_eur) if r is not None else 0.0,
                          "Buy date": bdate})
@@ -254,15 +253,28 @@ def _editor_to_positions(edited: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _derived_frame(state) -> pd.DataFrame:
-    """Per-lot invested (cost) vs current value + P&L%, plus a cash row."""
-    rows = [{"Stock": l.ticker, "Name": tickers.NAMES.get(l.ticker, l.ticker),
-             "position": _TIER_LABEL[l.tier], "invested €": l.cost_basis,
-             "current €": l.value, "P&L %": l.value / l.cost_basis - 1.0}
-            for l in state.lots]
-    rows.append({"Stock": "CASH", "Name": "Cash", "position": "cash",
-                 "invested €": state.cash, "current €": state.cash, "P&L %": 0.0})
-    return pd.DataFrame(rows)
+def _book_pie(state):
+    """Plotly donut of current value per position (ticker + tier) + cash, with the
+    invested € and P&L on hover. Zero-value lots are skipped."""
+    import plotly.graph_objects as go
+
+    labels, values, hover = [], [], []
+    for l in state.lots:
+        if l.value <= 0:
+            continue
+        labels.append(f"{l.ticker} {_TIER_LABEL[l.tier]}")
+        values.append(l.value)
+        pnl = l.value / l.cost_basis - 1.0 if l.cost_basis else 0.0
+        hover.append(f"current €{l.value:,.0f} · invested €{l.cost_basis:,.0f} · {pnl:+.1%}")
+    if state.cash > 0:
+        labels.append("Cash")
+        values.append(state.cash)
+        hover.append(f"€{state.cash:,.0f}")
+    fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.4, sort=False,
+                           textinfo="label+percent", hovertext=hover, hoverinfo="text"))
+    fig.update_layout(height=380, margin={"l": 0, "r": 0, "t": 10, "b": 0},
+                      showlegend=False)
+    return fig
 
 
 def _guard_to_frame(trades) -> pd.DataFrame:
@@ -301,13 +313,13 @@ def _render_live(data: dict) -> None:
     choice = st.selectbox("Portfolio file", names + [_NEW_PORTFOLIO], key="live_pf_select")
     if choice == _NEW_PORTFOLIO:
         name = st.text_input("New portfolio name", value="my-portfolio")
-        seed_positions, seed_cash, seed_key = _default_positions(market), 10000.0, "new"
+        seed_positions, seed_cash, seed_key = _default_positions(), 10000.0, "new"
     else:
         name = choice
         seed_positions, seed_cash, seed_key = (*portfolio_store.load_portfolio(name), name)
 
     edited = st.data_editor(
-        _positions_to_editor(seed_positions, market), hide_index=True, width="stretch",
+        _positions_to_editor(seed_positions), hide_index=True, width="stretch",
         num_rows="fixed", disabled=["Stock", "Name", "Position"],
         column_config={
             "Invested €": st.column_config.NumberColumn("Invested €", min_value=0.0,
@@ -330,12 +342,21 @@ def _render_live(data: dict) -> None:
     m1, m2, m3 = st.columns(3)
     m1.metric("Invested (cost)", f"€{invested:,.0f}")
     m2.metric("Current value", f"€{current:,.0f}", delta=f"{current / invested - 1:+.1%}"
-              if invested else None)
-    m3.metric("Drawdown from peak", f"{drawdown:.1%}")
-    with st.expander("Derived positions (invested vs current)", expanded=False):
-        st.dataframe(_derived_frame(state).style.format(
-            {"invested €": "€{:,.0f}", "current €": "€{:,.0f}", "P&L %": "{:+.1%}"}),
-            width="stretch", hide_index=True)
+              if invested else None,
+              help="Per position: invested € × (1 + leverage × underlying % return since "
+                   "its buy date). Leverage just scales the underlying move (no daily "
+                   "compounding); floored at €0.")
+    m3.metric("Drawdown from peak", f"{drawdown:.1%}",
+              help="How far the book's current value sits below its highest value reached "
+                   "since the earliest buy date (peak − current) / peak. 0% means you're at "
+                   "a new high. The default strategy starts de-risking past 20%.")
+    st.markdown("**Current value by position**")
+    if state.lots or state.cash > 0:
+        st.plotly_chart(_book_pie(state), width="stretch")
+        st.caption("Current value = invested × (1 + leverage × underlying % return since "
+                   "the buy date). Hover a slice for its invested € and P&L.")
+    else:
+        st.info("Add positions above to see the portfolio breakdown.")
 
     if st.button("Run live analysis (news + sentiment)", type="primary"):
         with st.spinner("Fetching live news/sentiment and scoring your book…"):

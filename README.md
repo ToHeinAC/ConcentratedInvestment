@@ -64,9 +64,10 @@ uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 
 The app opens on **Live: Sample Portfolio** — pick a saved portfolio (or start a new one;
 they persist as CSV files under `data/portfolios/`) and enter the € **invested** with a
-**separate buy date** for each position (stock/2x/3x of each stock), plus cash; **💾 Save /
-update** persists it. Current values, cost basis and drawdown are derived from prices since
-each position's buy date. Press **Run live analysis** for strategy-based, news/sentiment-aware
+**separate buy date** for each position (stock/2x/3x of each stock; defaulting to today),
+plus cash; **💾 Save / update** persists it. Current value (invested × leverage × underlying
+return since the buy date), cost basis and drawdown-from-peak are derived from prices and
+shown as metrics + a Plotly pie. Press **Run live analysis** for strategy-based, news/sentiment-aware
 buy/sell recommendations sized to your book (incl. the aggressive strategy's −60% stop-loss /
 +60% take-profit, which use the derived cost basis). The other three tabs (**ML: Current
 market / Forecast & Backtest / Strategy**) show the model's own backtested book vs. NASDAQ.

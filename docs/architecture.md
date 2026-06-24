@@ -200,10 +200,13 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `data.portfolio_store` (or "New portfolio"); a 15-row `st.data_editor` grid holds one row
   per position — the € **invested** and a **separate buy date** for each tier (stock / 2x /
   3x) of each stock — plus cash; a **💾 Save / update** button writes it back to the chosen
-  CSV. `pipeline.build_dated_book` derives each lot's **current value** (invested marked
-  forward from *its own* buy date by the constant-leverage model), keeps the real **cost
-  basis**, and computes the book's **high-water**, shown as invested-vs-current metrics + a
-  per-lot P&L table. A **Run live
+  CSV (buy dates default to **today** — a book entered "as it is right now" starts at
+  current ≈ invested). `pipeline.build_dated_book` derives each lot's **current value** as
+  `invested × (1 + tier × underlying-%-return-since-its-buy-date)` (simple leverage —
+  the underlying move scaled by leverage, no daily compounding; floored at €0), keeps the
+  real **cost basis**, and computes the book's **high-water** (always ≥ current, so the
+  drawdown can't go negative), shown as invested / current / drawdown metrics + a **Plotly
+  pie** of current value per position (invested € and P&L on hover). A **Run live
   analysis** button fetches live news/sentiment and calls `pipeline.recommend_for_portfolio`,
   surfacing the strategy's **actions** (default: drawdown de-risk / dominance / 33% trim;
   aggressive: −60% stop-loss / +60% take-profit / cap — both need the derived cost basis)
@@ -236,8 +239,9 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   snapshot via `_fetch_sentiment(as_of=…)`, so the live analyst signals accumulate
   history); `build_dated_book(positions, market, cash)` — pure: turns **per-position dated
   invested amounts** (`ticker, tier, invested_eur, buy_date` — each tier its own date) into
-  a `PortfolioState` (current value = invested marked forward from its buy date by
-  `_lot_value_path`'s constant-leverage model, real cost basis, derived high-water);
+  a `PortfolioState` (current value = `invested × (1 + tier × underlying-%-return)` since
+  the buy date — simple leverage, `_lot_value_path`; real cost basis, derived high-water
+  that always includes "now", so drawdown ≥ 0 even for lots bought past the last close);
   `recommend_for_portfolio(state, model, panel, market, strategy, …)` — side-effect-free
   live recommendations for a **user-supplied** book (reuses a trained model): live
   sentiment → forecast sized to the book (`apply_book_limits`) + overlay + the strategy's
@@ -257,7 +261,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   between training and inference. The other live analyst signals (EPS revisions,
   target, IV skew) likewise have no history and so are stored/displayed only, never
   trained on (a tree gains nothing from columns constant over training).
-- **Leverage** — 2x/3x modelled as daily-rebalanced constant-leverage return
-  multipliers (documented assumption; real LETF instruments revisited later).
+- **Leverage** — in the backtests, 2x/3x are daily-rebalanced constant-leverage return
+  multipliers (documented assumption; real LETF instruments revisited later). The Live
+  tab uses a deliberately simpler model for the user's own book — `invested × (1 + tier ×
+  total underlying return since the buy date)` — so a position's value is just its
+  underlying performance scaled by leverage.
 - **Network isolation** — all network calls live in `data.fetch`; every other module
   is pure and unit-tested offline with the synthetic fixtures in `tests/conftest.py`.
