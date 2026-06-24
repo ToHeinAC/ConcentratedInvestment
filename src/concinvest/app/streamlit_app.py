@@ -15,7 +15,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from concinvest import __version__, config
+from concinvest import config
 from concinvest.app import exit_button
 from concinvest.data import tickers
 from concinvest.ml.forecast import forecasts_to_frame
@@ -100,13 +100,14 @@ def _load(n_dataset: int, with_sentiment: bool):
         # getattr: tolerate a stale hot-reloaded engine without these fields.
         "positions": _state_to_frame(getattr(res.backtest, "final_state", None)),
         "tier_curve": getattr(res.backtest, "tier_curve", None),
+        "cash_curve": getattr(res.backtest, "cash_curve", None),
     }
 
 
 def main() -> None:
     st.set_page_config(page_title="ConcentratedInvestment", page_icon="📈", layout="wide")
     st.title("ConcentratedInvestment")
-    st.caption(f"v{__version__} · forecast-driven leveraged portfolio, rules & German tax")
+    st.caption("V1.0")
 
     with st.sidebar:
         st.header("Controls")
@@ -344,6 +345,39 @@ def _add_markers(fig, row: int, line: pd.Series, ev, size: int) -> None:
         ), row=row, col=1)
 
 
+def _render_cash(data: dict) -> None:
+    """Strategy tab's Cash view: cash (€) over NASDAQ on a shared x-axis."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    cash = data.get("cash_curve")
+    if cash is None or cash.empty:
+        st.info("Cash evolution unavailable — press **Run / refresh**.")
+        return
+    window = data["curve"].index
+    start, end = window[0], window[-1]
+    cash = cash.loc[start:end]
+    nq = _series(data["nasdaq"]).loc[start:end]
+
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+        row_heights=[0.55, 0.45],
+        subplot_titles=("Cash (€)", f"NASDAQ ({config.BENCHMARK_TICKER})"),
+    )
+    fig.add_trace(go.Scatter(x=cash.index, y=cash.values, mode="lines",
+                             name="cash", line={"color": "#2ca02c"}), row=1, col=1)
+    fig.add_trace(go.Scatter(x=nq.index, y=nq.values, mode="lines",
+                             name=f"NASDAQ ({config.BENCHMARK_TICKER})",
+                             line={"color": "#888"}), row=2, col=1)
+    fig.update_xaxes(range=[start, end])
+    fig.update_yaxes(title_text="€", row=1, col=1)
+    fig.update_layout(height=620, margin={"l": 0, "r": 0, "t": 50, "b": 0},
+                      legend={"orientation": "h", "y": 1.1})
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Cash balance over the validation window — rises as the book de-risks, "
+               "falls toward ~0% on a crisis buy-the-dip.")
+
+
 def _render_strategy(data: dict) -> None:
     """Third tab: price, per-tier balances, and NASDAQ for one asset stacked on a
     **shared x-axis**, with buy/sell signals (drawn on the decision day, T-1)."""
@@ -351,8 +385,13 @@ def _render_strategy(data: dict) -> None:
     from plotly.subplots import make_subplots
 
     st.subheader("Strategy per asset")
-    stock = st.selectbox("Asset", tickers.STOCKS,
-                         format_func=lambda t: f"{t} — {tickers.NAMES.get(t, t)}")
+    stock = st.selectbox(
+        "Asset", [*tickers.STOCKS, "CASH"],
+        format_func=lambda t: "Cash" if t == "CASH" else f"{t} — {tickers.NAMES.get(t, t)}",
+    )
+    if stock == "CASH":
+        _render_cash(data)
+        return
     window = data["curve"].index
     start, end = window[0], window[-1]
     mkt = data["market"].get(stock)

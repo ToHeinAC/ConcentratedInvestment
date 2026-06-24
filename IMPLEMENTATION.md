@@ -233,12 +233,15 @@ is neutral over history (no historical news feed) and filled live at forecast ti
 - **Trade log + per-tier balances** — `rules.Trade` carries `date`/`tier`; every buy/sell
   is logged **per tier** with its actual € (deploys split 9/4.5/4.5; the pro-rata rebalance
   sell is decomposed by `_sell_proportional` — selling logic unchanged, returns identical)
-  into `BacktestResult.trades`, and each day's per-`(ticker, tier)` value into
-  `BacktestResult.tier_curve`. The **Strategy tab** stacks three panels on a **shared
+  into `BacktestResult.trades`, each day's per-`(ticker, tier)` value into
+  `BacktestResult.tier_curve`, and each day's cash balance into `BacktestResult.cash_curve`.
+  The **Strategy tab** stacks three panels on a **shared
   x-axis** with a legend: the price curve with aggregated buy/sell markers (total €), the
   **per-tier balance-evolution chart** (stock / 2x / 3x from `tier_curve`) with per-tier
   markers (actual € each), and NASDAQ; the full buy/sell table sits behind a **popover
-  button**. Markers are drawn on the decision day (T-1, the signal bar), display-only.
+  button**. Markers are drawn on the decision day (T-1, the signal bar), display-only. The
+  asset selector also offers **Cash** as a 6th option — cash (€) over NASDAQ on a shared
+  x-axis, from `cash_curve`.
 - **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
   the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
   price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
@@ -257,7 +260,7 @@ is neutral over history (no historical news feed) and filled live at forecast ti
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 66 tests, offline (synthetic fixtures)
+uv run pytest                                   # 67 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
@@ -282,11 +285,12 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   per-stock target fraction (6% floor) + independent-name rebalance, backtest
   final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
   underlying-dominance leverage trim, €500 min-trade skip (guardrails + forecast),
-  forecast book-limits (cash/holdings caps).
+  forecast book-limits (cash/holdings caps), safe-exit self-SIGTERM (own PID only).
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
-  kills only the app port, never SSH.
+  SIGTERMs only the app's own process, never the port (so a shared/forwarded port or SSH
+  is untouched).
 
 ## 7. Remaining phases — detail
 

@@ -31,6 +31,7 @@ class BacktestResult:
     trades: list[rules.Trade] = field(default_factory=list)  # forecast backtest only
     final_state: pstate.PortfolioState | None = None  # end-of-window book (forecast bt)
     tier_curve: pd.DataFrame | None = None  # daily per-(ticker, tier) value (forecast bt)
+    cash_curve: pd.Series | None = None  # daily cash balance (forecast bt)
 
     @property
     def outperformance(self) -> float:
@@ -322,6 +323,7 @@ def run_forecast_backtest(
     state = pstate.build_base_case(capital, stocks=stocks)
     crisis_day: int | None = None
     values: list[float] = []
+    cash_vals: list[float] = []  # end-of-day cash for the Strategy tab's Cash view
     tier_rows: list[dict] = []  # end-of-day value per (ticker, tier) for the Strategy tab
     trades: list[rules.Trade] = []
     for i, (date, row) in enumerate(rets.iterrows()):
@@ -351,6 +353,7 @@ def run_forecast_backtest(
             t.date = date
         trades.extend(day)
         values.append(state.total_value())
+        cash_vals.append(state.cash)
         snap: dict[tuple[str, str], float] = {}
         for lot in state.lots:
             key = (lot.ticker, _TIER_LABEL[lot.tier])
@@ -358,6 +361,7 @@ def run_forecast_backtest(
         tier_rows.append(snap)
 
     portfolio = pd.Series(values, index=dates)
+    cash_curve = pd.Series(cash_vals, index=dates)
     tier_curve = pd.DataFrame(tier_rows, index=dates).fillna(0.0)
     if not tier_curve.empty:
         tier_curve.columns = pd.MultiIndex.from_tuples(
@@ -368,4 +372,5 @@ def run_forecast_backtest(
     p_ret = float(curve["portfolio"].iloc[-1] / curve["portfolio"].iloc[0] - 1.0)
     b_ret = float(curve["benchmark"].iloc[-1] / curve["benchmark"].iloc[0] - 1.0)
     return BacktestResult(curve=curve, portfolio_return=p_ret, benchmark_return=b_ret,
-                          trades=trades, final_state=state, tier_curve=tier_curve)
+                          trades=trades, final_state=state, tier_curve=tier_curve,
+                          cash_curve=cash_curve)

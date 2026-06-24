@@ -1,70 +1,24 @@
 """Safe-exit helper for the Streamlit app.
 
-Dynamically finds the port the current Streamlit server is bound to (the app runs
-on port 8505 by project convention) and kills only that process group. It never
-touches an SSH connection.
+Shuts down **only this Streamlit server's own process** (SIGTERM to the current
+PID). It never runs an ``lsof``/port kill, so any other process that shares or
+forwards the app's port (e.g. an IDE remote-server port-forward, or an SSH tunnel)
+is left untouched.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-
-from concinvest import config
+import signal
 
 
-def current_port(default: int = config.STREAMLIT_PORT) -> int:
-    """Best-effort discovery of the running Streamlit server port."""
-    # Streamlit exposes its port via this env var when launched with --server.port.
-    env_port = os.environ.get("STREAMLIT_SERVER_PORT")
-    if env_port and env_port.isdigit():
-        return int(env_port)
-    try:
-        from streamlit import config as st_config  # local import: optional dep
+def shutdown(sig: int = signal.SIGTERM) -> None:
+    """Terminate the current Streamlit server process — and only it.
 
-        port = int(st_config.get_option("server.port"))
-        if port > 0:
-            return port
-    except Exception:
-        pass
-    return default
-
-
-def kill_port(port: int) -> None:
-    """Kill processes listening on ``port`` without disturbing SSH.
-
-    Mirrors: ``lsof -ti:PORT | xargs -r kill -9`` but filters out anything whose
-    command name contains "ssh" as a safety guard.
+    Signals this very process by PID, so the port is released by the app exiting
+    rather than by killing whatever is bound to it.
     """
-    try:
-        out = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return  # lsof unavailable; nothing we can safely do
-
-    pids = [p for p in out.stdout.split() if p.isdigit()]
-    for pid in pids:
-        if _is_ssh(pid):
-            continue
-        subprocess.run(["kill", "-9", pid], check=False)
-
-
-def _is_ssh(pid: str) -> bool:
-    """Return True if the process command name references ssh."""
-    try:
-        comm = subprocess.run(
-            ["ps", "-p", pid, "-o", "comm="],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return False
-    return "ssh" in comm.stdout.lower()
+    os.kill(os.getpid(), sig)
 
 
 def render(st) -> None:
@@ -72,7 +26,6 @@ def render(st) -> None:
 
     ``st`` is passed in to avoid importing streamlit at module load.
     """
-    port = current_port()
-    if st.button(f"⏻ Stop app (port {port})"):
-        st.warning(f"Shutting down Streamlit on port {port}…")
-        kill_port(port)
+    if st.button("⏻ Stop app"):
+        st.warning("Shutting down the app…")
+        shutdown()

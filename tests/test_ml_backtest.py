@@ -229,6 +229,16 @@ def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     a_stock = synth_market and list(synth_market)[0]
     assert a_stock in tc.columns.get_level_values("ticker")
     assert set(tc[a_stock].columns) <= {"stock", "2x", "3x"}
+    # Daily cash history for the Strategy tab's Cash view: aligned, non-negative, and
+    # cash + invested == total portfolio value each day (the evolution of cash).
+    cash = res.cash_curve
+    assert cash is not None
+    assert (cash.index == res.curve.index).all()
+    assert (cash >= -1e-6).all()
+    invested = tc.sum(axis=1).reindex(res.curve.index)
+    assert (cash + invested).to_numpy() == pytest.approx(
+        res.curve["portfolio"].to_numpy()
+    )
 
 
 def test_backtest_produces_curve(synth_market, synth_raw):

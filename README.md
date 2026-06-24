@@ -71,11 +71,12 @@ PYTHONPATH=src python -m pytest
 
 ### Stopping the app
 
-The Streamlit sidebar has a **safe-exit button** that finds the running port and kills only that
-process (never your SSH session). Manual equivalent:
+The Streamlit sidebar has a **safe-exit button** that shuts down only the app's **own**
+process (`SIGTERM` to its PID) — it never `lsof`/port-kills, so anything else sharing or
+forwarding the port (an SSH tunnel, an IDE port-forward) is untouched. Manual equivalent:
 
 ```bash
-lsof -ti:8505 | xargs -r kill -9
+kill "$(pgrep -f 'streamlit run.*concinvest')"
 ```
 
 ---

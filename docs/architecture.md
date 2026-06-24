@@ -142,7 +142,8 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
   portfolio/benchmark returns + `beats_benchmark` + `trades` + `final_state` (the
   forecast backtest's end-of-window `PortfolioState` for the Current-portfolio view) +
-  `tier_curve` (daily per-`(ticker, tier)` value for the Strategy tab)): `run_backtest()` (Phase 1
+  `tier_curve` (daily per-`(ticker, tier)` value for the Strategy tab) + `cash_curve`
+  (daily cash balance, for the Strategy tab's Cash view)): `run_backtest()` (Phase 1
   confidence-scaled equal-weight basket), `run_rules_backtest()` (base-case leveraged
   book under guardrails, sell-side only), and `run_forecast_backtest()` — **the
   pipeline's backtest** — the leveraged book where **each name's** target portfolio
@@ -182,9 +183,12 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   aggregated buy/sell markers, a per-tier balance-evolution chart from
   `BacktestResult.tier_curve` with per-tier markers (actual € each), and NASDAQ; the full
   trade table behind a popover button. Markers drawn on the decision day T-1 — interactive
-  Plotly). Cached via `st.cache_data`.
-- **`exit_button.py`** — safe-exit helper: discovers the running port (default 8505),
-  `lsof -ti:PORT | kill -9` filtered to skip any `ssh` process.
+  Plotly). The asset selector also offers **Cash** as a 6th option: cash (€) over NASDAQ
+  on a shared x-axis, from `BacktestResult.cash_curve`. Cached via `st.cache_data`.
+- **`exit_button.py`** — safe-exit helper: `shutdown()` sends `SIGTERM` to the app's
+  **own** PID (`os.kill(os.getpid(), …)`) — no `lsof`/port kill, so anything sharing or
+  forwarding the port (SSH tunnel, IDE port-forward) is left untouched; the port frees
+  when the app exits.
 
 ### Top level
 - **`config.py`** — paths, dates (`START_DATE` 2020-01-01), portfolio/risk/tax
