@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--sentiment", action="store_true", help="fetch live sentiment")
     p_run.add_argument("--no-tune", dest="tune", action="store_false",
                        help="skip TimeSeriesSplit hyperparameter tuning")
+    p_run.add_argument("--strategy", choices=["default", "aggressive"], default="default",
+                       help="portfolio book: default (90/10 guardrailed) or aggressive (all-3x)")
 
     p_val = sub.add_parser("validate", help="Walk-forward (multi-window) validation vs NASDAQ")
     p_val.add_argument("--start", default=str(config.START_DATE))
@@ -73,8 +75,10 @@ def main(argv: list[str] | None = None) -> int:
         from .pipeline import run_phase1
 
         res = run_phase1(start=args.start, n_dataset=args.n,
-                         with_sentiment=args.sentiment, tune=args.tune)
+                         with_sentiment=args.sentiment, tune=args.tune,
+                         strategy=args.strategy)
         bt = res.backtest
+        print(f"strategy: {args.strategy}")
         print(f"model CV ROC-AUC (mean): {res.model.mean_cv:.3f} | params: {res.model.params}")
         print(f"portfolio return: {bt.portfolio_return:+.1%} | "
               f"NASDAQ: {bt.benchmark_return:+.1%} | "

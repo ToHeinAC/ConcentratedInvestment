@@ -241,6 +241,120 @@ def test_forecast_backtest_produces_curve(synth_market, synth_raw):
     )
 
 
+# --- aggressive strategy -------------------------------------------------
+def test_agg_stop_loss_exits_only_lots_below_threshold():
+    st = pstate.PortfolioState(cash=0.0, high_water=100_000.0)
+    st.lots = [pstate.Lot("A", 3, 10_000.0, 3_900.0),   # -61% -> stop out
+               pstate.Lot("B", 3, 10_000.0, 5_000.0),   # -50% -> hold
+               pstate.Lot("A", 1, 10_000.0, 1_000.0)]   # underlying base -> never stopped
+    trades = engine._agg_stop_loss(st)
+    assert [t.ticker for t in trades] == ["A"] and trades[0].tier == 3
+    assert {lot.ticker for lot in st.lots} == {"A", "B"}  # only the A 3x lot left
+    assert all(not (lot.ticker == "A" and lot.tier == 3) for lot in st.lots)
+
+
+def test_agg_take_profit_skims_rebases_and_seeds_underlying():
+    st = pstate.PortfolioState(cash=0.0, high_water=100_000.0)
+    st.lots = [pstate.Lot("A", 3, 10_000.0, 16_000.0, tp_basis=10_000.0)]  # +60%
+    sell_row = pd.Series({"A": 0.0})  # no extra ML conviction -> minimum 30% skim
+    trades = engine._agg_take_profit(st, sell_row)
+    # Skim 30% of 16k = 4.8k gross (no gain tax-free portion: gain 6k -> partial tax).
+    sell = next(t for t in trades if t.action == "sell")
+    assert sell.tier == 3 and abs(sell.amount_eur - 4_800.0) < 1e-6
+    a3 = next(lot for lot in st.lots if lot.tier == 3)
+    assert abs(a3.value - 11_200.0) < 1e-6        # 70% of the position remains
+    assert abs(a3.tp_basis - 11_200.0) < 1e-6     # reference re-based to the remainder
+    # ~half of net proceeds seeded a permanent tier-1 underlying lot; rest is cash.
+    assert any(lot.tier == 1 for lot in st.lots)
+    buy = next(t for t in trades if t.action == "buy")
+    assert buy.tier == 1 and st.cash > 0.0
+
+
+def test_agg_take_profit_skips_below_threshold():
+    st = pstate.PortfolioState(cash=0.0, high_water=100_000.0)
+    st.lots = [pstate.Lot("A", 3, 10_000.0, 15_000.0, tp_basis=10_000.0)]  # +50% only
+    assert engine._agg_take_profit(st, pd.Series({"A": 0.9})) == []
+
+
+def test_agg_entries_deploys_fixed_chunk_on_bullish_names():
+    st = pstate.PortfolioState(cash=20_000.0, high_water=100_000.0)
+    buy_row = pd.Series({"A": 0.9, "B": 0.5})  # A bullish, B below entry threshold
+    trades = engine._agg_entries(st, buy_row, total=100_000.0)
+    assert [t.ticker for t in trades] == ["A"]
+    assert trades[0].tier == 3
+    assert abs(trades[0].amount_eur - 10_000.0) < 1e-6  # 10% of 100k portfolio value
+    assert abs(st.cash - 10_000.0) < 1e-6
+
+
+def test_agg_entries_skip_when_cash_below_min_trade():
+    st = pstate.PortfolioState(cash=300.0, high_water=100_000.0)  # < MIN_TRADE_EUR
+    assert engine._agg_entries(st, pd.Series({"A": 0.9}), total=100_000.0) == []
+
+
+def test_agg_entries_skip_names_already_at_cap():
+    st = pstate.PortfolioState(cash=50_000.0, high_water=100_000.0)
+    st.lots = [pstate.Lot("A", 3, 40_000.0, 40_000.0),   # 40% -> over the 33% cap
+               pstate.Lot("B", 3, 10_000.0, 10_000.0)]    # 10% -> still has room
+    trades = engine._agg_entries(st, pd.Series({"A": 0.9, "B": 0.9}), total=100_000.0)
+    assert [t.ticker for t in trades] == ["B"]  # no new entry into the capped name A
+
+
+def test_agg_cap_overweight_trims_back_to_cap_3x_first():
+    st = pstate.PortfolioState(cash=0.0, high_water=60_000.0)
+    # Book = 60k: A is 50k (stock 10k + 3x 40k, > the 33% cap of 19.8k), B is 10k (under).
+    st.lots = [pstate.Lot("A", 1, 10_000.0, 10_000.0),
+               pstate.Lot("A", 3, 40_000.0, 40_000.0),
+               pstate.Lot("B", 3, 10_000.0, 10_000.0)]
+    trades = engine._agg_cap_overweight(st)
+    assert {t.ticker for t in trades} == {"A"}  # only the over-cap name
+    assert trades[0].tier == 3  # riskiest tier shed first
+    # A trimmed back to exactly the 33% cap; the 30.2k excess comes entirely from the 3x
+    # tier (it had 40k), leaving the underlying base (10k) untouched.
+    cap = config.PER_NAME_CAP * 60_000.0
+    assert abs(st.name_value("A") - cap) < 1e-6
+    a3 = sum(lot.value for lot in st.lots if lot.ticker == "A" and lot.tier == 3)
+    assert abs(a3 - (40_000.0 - (50_000.0 - cap))) < 1e-6  # 40k - 30.2k excess
+
+
+def test_aggressive_backtest_produces_curve(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=5)
+    trained = model.train(X, y, n_estimators=50, n_splits=3)
+    bench = synth_raw["^IXIC"]["close"]
+    bench.index = pd.to_datetime(list(bench.index))
+    res = engine.run_aggressive_backtest(synth_market, bench, trained, panel)
+    assert {"portfolio", "benchmark"}.issubset(res.curve.columns)
+    assert len(res.curve) > 50
+    assert (res.curve["portfolio"] > 0).all()
+    assert all(t.date is not None and t.action in {"buy", "sell"} for t in res.trades)
+    # Final book matches the curve end and only ever holds 3x + underlying (stock) tiers.
+    assert res.final_state.total_value() == pytest.approx(
+        float(res.curve["portfolio"].iloc[-1])
+    )
+    assert all(lot.tier in (1, 3) for lot in res.final_state.lots)  # no 2x in this book
+    # Per-name concentration cap holds at end of window (within one min-trade slack).
+    fs = res.final_state
+    cap = config.PER_NAME_CAP * fs.total_value() + config.MIN_TRADE_EUR
+    assert all(fs.name_value(t) <= cap for t in synth_market)
+    tc = res.tier_curve
+    assert tc is not None and not tc.empty
+    assert set(tc.columns.get_level_values("tier")) <= {"stock", "3x"}
+    # cash + invested == portfolio value each day.
+    invested = tc.sum(axis=1).reindex(res.curve.index)
+    assert (res.cash_curve + invested).to_numpy() == pytest.approx(
+        res.curve["portfolio"].to_numpy()
+    )
+
+
+def test_forecast_restricts_to_3x_when_requested(synth_market, synth_raw):
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=6)
+    trained = model.train(X, y, n_estimators=50, n_splits=3)
+    snaps = {t: panel.xs(t, level="ticker").iloc[-1] for t in synth_market}
+    fcs = forecast.forecast(trained, snaps, threshold=0.0, leverages=(3,))
+    assert fcs and all(f.leverage == "3x" for f in fcs)
+
+
 def test_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=3)

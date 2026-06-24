@@ -102,7 +102,8 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `TrainedModel.features` records the columns actually used. The pipeline trains on
   the pre-validation split only, so the validation-window backtest is out-of-sample.
 - **`forecast.py`** — `forecast()` enumerates buy/sell × leverage candidates per
-  stock, scores them, and keeps the best above `threshold` (else hold). Emits the
+  stock (the `leverages` arg restricts the tiers — the aggressive strategy passes
+  `(3,)`), scores them, and keeps the best above `threshold` (else hold). Emits the
   five Story.md fields via the `Forecast` dataclass; `forecasts_to_frame()` tabulates.
   `apply_book_limits()` (applied after the overlay) caps each buy at the remaining cash
   and each sell at the held tier value, dropping unfundable actions (Story.md: buy only
@@ -115,12 +116,15 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 
 ### `portfolio/` (Phase 4)
 - **`state.py`** — `PortfolioState` (cash + leveraged `Lot`s with cost basis,
-  `loss_carry`, `high_water`). `mark()` applies daily constant-leverage returns;
-  `buy()`/`sell_name()` open lots and realize tax-adjusted proceeds; `sell_tier()`
-  sells one tier only (tier-targeted de-risk) — both route through `_sell_lots`;
-  `pay_dividends()` credits cash on tier-1 (underlying) lots only, net of flat tax
-  (Story.md: leveraged lots earn no dividend); `build_base_case()` constructs the
-  Story.md 90/10 book (per-name 9%/4.5%/4.5%).
+  `loss_carry`, `high_water`). Each `Lot` also carries `tp_basis` (a take-profit
+  reference used only by the aggressive strategy, re-based after each skim). `mark()`
+  applies daily constant-leverage returns; `buy()`/`sell_name()` open lots and realize
+  tax-adjusted proceeds; `sell_tier()` sells one tier only (tier-targeted de-risk);
+  `sell_lot()` sells a single lot (aggressive stop-loss / take-profit) — all route
+  through `_sell_lots`; `pay_dividends()` credits cash on tier-1 (underlying) lots only,
+  net of flat tax (Story.md: leveraged lots earn no dividend); `build_base_case()`
+  constructs a book from a per-name tier `split` — the Story.md 90/10 default
+  (9%/4.5%/4.5%) or the aggressive all-3x `config.AGG_BASE_SPLIT` (18% 3x).
 - **`tax.py`** — `tax_on_sale()`: 25% flat Abgeltungsteuer with a single
   **full-portfolio** realized-loss carry pool (never expiring) that offsets future gains
   before tax, so gains and losses net across the whole book over time (Story.md).
@@ -139,7 +143,7 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   The crisis buy-the-dip path lives in `backtest.engine` (`_is_crisis`/`_deploy`).
 
 ### `backtest/`
-- **`engine.py`** — three backtests, all returning a `BacktestResult` (curve +
+- **`engine.py`** — four backtests, all returning a `BacktestResult` (curve +
   portfolio/benchmark returns + `beats_benchmark` + `trades` + `final_state` (the
   forecast backtest's end-of-window `PortfolioState` for the Current-portfolio view) +
   `tier_curve` (daily per-`(ticker, tier)` value for the Strategy tab) + `cash_curve`
@@ -165,6 +169,18 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   with its actual € (deploys split 9/4.5/4.5; the pro-rata rebalance sell via
   `_sell_proportional`), date-stamped, and returned as `BacktestResult.trades` (the
   Strategy tab's source); each day's per-`(ticker, tier)` value is `BacktestResult.tier_curve`.
+  The per-day snapshot and result assembly are shared via `_tier_snapshot` /
+  `_assemble_result`. **`run_aggressive_backtest()`** is the fourth, selectable book (the
+  all-3x "Aggressive" strategy; IMPLEMENTATION.md §4b): the `config.AGG_BASE_SPLIT` 90/10
+  all-3x base case, then per day `_agg_stop_loss` (full exit of a 3x lot ≤ −60% of cost),
+  `_agg_take_profit` (skim ≥30% of a lot ≥ +60% of its `tp_basis`, re-base the remainder,
+  seed half the net proceeds into a permanent tier-1 underlying lot), and either
+  `_agg_deploy_crisis` (deploy the cash hoard into 3x on `_is_crisis`) or `_agg_entries`
+  (fixed 10%-of-portfolio 3x chunks for names with buy-confidence ≥ `AGG_ENTRY_THRESHOLD`,
+  skipping already-capped names), then `_agg_cap_overweight` (cap each name's total at
+  `PER_NAME_CAP` = 33%, shedding 3x first → cash, via the shared `rules.sell_riskiest_first`)
+  to bound single-stock concentration. No drawdown/dominance guardrails or daily-cap beyond
+  that. Per-name buy/sell confidence comes from `_name_confidence(..., is_sell, leverage)`.
 - **`walkforward.py`** — `walk_forward_validate()` trains-then-tests across several
   consecutive `window`-day windows (model trained only on prior data, with a horizon
   embargo so labels don't bleed across the boundary), returning a `WalkForwardResult`

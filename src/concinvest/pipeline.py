@@ -12,7 +12,11 @@ from dataclasses import dataclass
 import pandas as pd
 
 from . import config
-from .backtest.engine import BacktestResult, run_forecast_backtest
+from .backtest.engine import (
+    BacktestResult,
+    run_aggressive_backtest,
+    run_forecast_backtest,
+)
 from .backtest.walkforward import WalkForwardResult, walk_forward_validate
 from .data import fetch, store, tickers
 from .features import analyst, cross_asset, technical
@@ -164,9 +168,13 @@ def run_phase1(
     horizon: int = 20,
     with_sentiment: bool = True,
     tune: bool = True,
+    strategy: str = "default",
     db_path=None,
 ) -> Phase1Result:
-    """Run the full slice over the full ticker universe; return artifacts for UI/CLI."""
+    """Run the full slice over the full ticker universe; return artifacts for UI/CLI.
+
+    ``strategy`` selects the backtest/forecast book: ``"default"`` (the guardrailed
+    90/10 base case) or ``"aggressive"`` (the all-3x book; see ``run_aggressive_backtest``)."""
     universe = tickers.ALL_TICKERS
     market, cross, raw = fetch_and_store(universe, start=start, end=end, db_path=db_path)
 
@@ -187,7 +195,8 @@ def run_phase1(
     nasdaq = (raw[config.BENCHMARK_TICKER]["close"]
               if config.BENCHMARK_TICKER in raw
               else pd.DataFrame({t: df["close"] for t, df in market.items()}).mean(axis=1))
-    bt = run_forecast_backtest(market, nasdaq, trained, panel, start=val_start)
+    run_bt = run_aggressive_backtest if strategy == "aggressive" else run_forecast_backtest
+    bt = run_bt(market, nasdaq, trained, panel, start=val_start)
 
     # Live analyst/sentiment, then forecast from the latest snapshots. The sentiment
     # overlay tilts the live forecast only (these signals have no history to backtest);
@@ -196,7 +205,9 @@ def run_phase1(
                     if with_sentiment else pd.DataFrame())
     snaps = _live_snapshots(panel, sentiment_df)
     book_value = bt.final_state.total_value() if bt.final_state else config.INITIAL_CAPITAL_EUR
-    forecasts = forecast.forecast(trained, snaps, portfolio_value=book_value)
+    leverages = (3,) if strategy == "aggressive" else config.LEVERAGE_TIERS
+    forecasts = forecast.forecast(trained, snaps, portfolio_value=book_value,
+                                  leverages=leverages)
     latest_close = {t: float(df["close"].iloc[-1]) for t, df in market.items()}
     forecasts = overlay.apply_overlay(forecasts, sentiment_df, latest_close)
     forecasts = forecast.apply_book_limits(forecasts, *_book_cash_held(bt.final_state))

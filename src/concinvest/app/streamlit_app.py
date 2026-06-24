@@ -79,12 +79,13 @@ def _trades_to_frame(trades) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Fetching data, training model, running backtest…", ttl=3600)
-def _load(n_dataset: int, with_sentiment: bool):
+def _load(n_dataset: int, with_sentiment: bool, strategy: str):
     # Import here so the module loads fast even if heavy deps lag.
     from concinvest.pipeline import run_phase1
 
-    res = run_phase1(n_dataset=n_dataset, with_sentiment=with_sentiment)
+    res = run_phase1(n_dataset=n_dataset, with_sentiment=with_sentiment, strategy=strategy)
     return {
+        "strategy": strategy,
         "forecasts": forecasts_to_frame(res.forecasts),
         "curve": res.backtest.curve,
         "portfolio_return": res.backtest.portfolio_return,
@@ -104,16 +105,57 @@ def _load(n_dataset: int, with_sentiment: bool):
     }
 
 
+_DEFAULT_POINTS = """\
+**Default (balanced)** — the Story.md base case
+- Start **90% / 10% cash**; per name **9% stock + 4.5% 2x + 4.5% 3x** (18%)
+- ML buy-confidence sets each name's target weight (per-stock, lagged)
+- Guardrails: **33% per-name trim**, **underlying ≥ 2x+3x**, **20% drawdown → de-risk**
+- Crisis: go **~100% invested** (buy-the-dip), revert to base within ~2 months
+- 25% German tax with loss offset; dividends on the underlying
+- *Lower variance — the all-rounder.*"""
+
+_AGGRESSIVE_POINTS = """\
+**Aggressive (3x)** — high-leverage, minimal rules
+- Start **90% in 3x** (per name **18%**) + 10% cash; **3x only**
+- **Stop-loss:** cut a position fully at **−60%** (underlying −20% vs entry) → cash
+- **Take-profit:** at **+60%**, skim an ML amount (**≥30%**), split **50/50** into
+  cash and a permanent **underlying buy-and-hold** base (pays dividends)
+- **Entry:** ML buy event deploys a fixed **10% of portfolio** into 3x
+- **Crash:** deploy the piled-up cash into 3x (buy-the-dip)
+- **33% per-name cap** so one stock can't dominate
+- *Higher variance — bigger upside, harder hits.*"""
+
+
+def _render_strategy_help(st) -> None:
+    """Popover (top-right of the page) showing both strategies' main points."""
+    with st.popover("ℹ️ Compare strategies", width="stretch"):
+        st.markdown(_DEFAULT_POINTS)
+        st.divider()
+        st.markdown(_AGGRESSIVE_POINTS)
+        st.divider()
+        st.caption("Pick the strategy in the sidebar (Default unless you switch). Both "
+                   "share the same model, data, tax and dividend handling.")
+
+
 def main() -> None:
     st.set_page_config(page_title="ConcentratedInvestment", page_icon="📈", layout="wide")
-    st.title("ConcentratedInvestment")
-    st.caption("V1.0")
+    title_col, help_col = st.columns([4, 1])
+    title_col.title("ConcentratedInvestment")
+    title_col.caption("V1.0")
+    with help_col:
+        _render_strategy_help(st)
 
     with st.sidebar:
         st.header("Controls")
         n_dataset = st.select_slider(
             "Training datapoints", options=[1000, 2000, 4000, 8000], value=4000
         )
+        strategy_label = st.radio(
+            "Strategy", ["Default (balanced)", "Aggressive (3x)"], index=0,
+            help="Default: 90/10 guardrailed book. Aggressive: all-3x book with "
+                 "−60% stop-loss / +60% take-profit and a growing underlying base.",
+        )
+        strategy = "aggressive" if strategy_label.startswith("Aggressive") else "default"
         with_sentiment = st.checkbox("Live sentiment (slower)", value=False)
         run = st.button("Run / refresh", type="primary")
         st.divider()
@@ -127,7 +169,7 @@ def main() -> None:
         st.session_state["loaded"] = True
         _load.clear()
 
-    data = _load(n_dataset, with_sentiment)
+    data = _load(n_dataset, with_sentiment, strategy)
 
     tab_current, tab_forecast, tab_strategy = st.tabs(
         ["Current market", "Forecast & Backtest", "Strategy"]
@@ -163,11 +205,18 @@ def _render_current(data: dict) -> None:
         )
     with col_pie:
         st.plotly_chart(_positions_pie(positions), width="stretch")
-    st.caption(
-        "Actual end-of-backtest book — evolved from the 90/10 base case over the "
-        "validation window. Weights and cash are live (cash rises on de-risk, falls "
-        "to ~0% on a crisis buy-the-dip), not the static template."
-    )
+    if data.get("strategy") == "aggressive":
+        st.caption(
+            "Actual end-of-backtest book — aggressive all-3x strategy. Started ~90% in "
+            "3x + 10% cash; the **stock** tier is the underlying buy-and-hold base built "
+            "from take-profits, and cash rises as winners are skimmed / losers stopped out."
+        )
+    else:
+        st.caption(
+            "Actual end-of-backtest book — evolved from the 90/10 base case over the "
+            "validation window. Weights and cash are live (cash rises on de-risk, falls "
+            "to ~0% on a crisis buy-the-dip), not the static template."
+        )
 
     _render_correlation(data["correlation"])
     _render_sentiment(data.get("sentiment"), data.get("market", {}))

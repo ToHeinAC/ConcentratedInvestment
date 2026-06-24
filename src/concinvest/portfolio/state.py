@@ -23,6 +23,8 @@ class Lot:
     tier: int  # 1 (stock), 2 (2x), 3 (3x)
     cost_basis: float  # EUR originally invested (tax basis)
     value: float  # current EUR market value
+    tp_basis: float = 0.0  # take-profit reference (aggressive strategy only; re-based
+    # after each skim so a re-trigger needs another +60%). Unused by the default book.
 
 
 @dataclass
@@ -63,7 +65,7 @@ class PortfolioState:
         if amount <= 0:
             return 0.0
         self.cash -= amount
-        self.lots.append(Lot(ticker, tier, amount, amount))
+        self.lots.append(Lot(ticker, tier, amount, amount, tp_basis=amount))
         return amount
 
     def sell_name(
@@ -93,6 +95,16 @@ class PortfolioState:
             amount_eur,
             tax_fn,
         )
+
+    def sell_lot(
+        self,
+        lot: Lot,
+        amount_eur: float,
+        tax_fn: Callable[[float, float], tuple[float, float]] = tax_mod.tax_on_sale,
+    ) -> float:
+        """Sell ``amount_eur`` of one ``lot`` (aggressive stop-loss / take-profit on a
+        single 3x position). Same tax + cash semantics as ``sell_name``."""
+        return self._sell_lots([lot], amount_eur, tax_fn)
 
     def _sell_lots(
         self,

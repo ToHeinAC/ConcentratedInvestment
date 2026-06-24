@@ -57,6 +57,30 @@ def test_dividends_pay_underlying_only_net_of_tax():
     assert abs(st.cash - expected) < 1e-9
 
 
+# --- aggressive strategy state helpers -----------------------------------
+def test_buy_sets_take_profit_basis():
+    st = state.PortfolioState(cash=10_000.0, high_water=10_000.0)
+    st.buy("A", 3, 5_000.0)
+    assert st.lots[0].tp_basis == 5_000.0  # re-base reference initialised to entry cost
+
+
+def test_sell_lot_sells_single_lot_net_of_tax():
+    st = state.PortfolioState(cash=0.0, high_water=200.0)
+    st.lots = [state.Lot("A", 3, 100.0, 200.0), state.Lot("A", 3, 100.0, 100.0)]
+    net = st.sell_lot(st.lots[0], 200.0)  # sell the first lot fully; gain 100 -> tax 25
+    assert abs(net - 175.0) < 1e-6
+    assert abs(st.cash - 175.0) < 1e-6
+    assert [(lot.cost_basis, lot.value) for lot in st.lots] == [(100.0, 100.0)]
+
+
+def test_aggressive_base_case_is_all_3x():
+    st = state.build_base_case(100_000.0, stocks=["A", "B", "C", "D", "E"],
+                               split=config.AGG_BASE_SPLIT)
+    assert abs(st.cash - 10_000.0) < 1e-6  # 90% invested, 10% cash
+    assert all(lot.tier == 3 for lot in st.lots)  # only 3x
+    assert abs(st.name_value("A") - 18_000.0) < 1e-6  # per-name 18%
+
+
 # --- rules ---------------------------------------------------------------
 def test_trim_fires_above_per_name_cap():
     st = state.PortfolioState(cash=30_000.0, high_water=100_000.0)

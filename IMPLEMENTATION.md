@@ -67,6 +67,33 @@ placeholders + action encoding (`is_sell`, `leverage`). Lags give the trees rece
 trajectory (strictly past data — no leakage); low-importance ones are pruned. Sentiment
 is neutral over history (no historical news feed) and filled live at forecast time.
 
+## 4b. Strategies (selectable in the UI / `concinvest run --strategy`)
+
+Two backtest/forecast books share the model, panel, tax, dividends, and
+`BacktestResult` shape (so all three UI tabs render either). **Default** is selected
+unless changed.
+
+- **Default (balanced)** — `backtest.run_forecast_backtest`: the guardrailed Story.md
+  90/10 book (per-name 9% stock / 4.5% 2x / 4.5% 3x) with per-stock confidence
+  rebalancing, 33% trim, underlying-dominance, 20%-drawdown de-risk, and the crisis
+  100%/2-month-revert path. This is the project's main strategy (Phases 3–4).
+- **Aggressive (3x)** — `backtest.run_aggressive_backtest`: an all-3x book with
+  **minimal rules** (no underlying-dominance / drawdown-de-risk guardrails, no
+  daily-sell cap). Start 90% in 3x (per-name 18%) + 10% cash. Each 3x lot is **stopped
+  out fully at −60%** (value ≤ 40% of cost → underlying −20% vs entry; proceeds → cash).
+  Once a lot is **+60%** (value ≥ 160% of its take-profit reference) an **ML amount
+  (≥30%)** is skimmed, split **50/50** into cash and a permanent **tier-1 underlying**
+  buy-and-hold lot (earns dividends, never re-leveraged); the skimmed lot's reference is
+  **re-based** to its remainder (needs another +60% to re-trigger). **ML buy events**
+  (3x only, confidence ≥ `AGG_ENTRY_THRESHOLD`) deploy a fixed `AGG_ENTRY_CHUNK` (10%)
+  of portfolio per name; a **crisis** (`_is_crisis`) deploys the accumulated cash
+  hoard into 3x (buy-the-dip). A **per-name concentration cap** (`_agg_cap_overweight`,
+  reusing the default's `PER_NAME_CAP` = 33% + `rules.sell_riskiest_first`) trims any name
+  whose total (underlying + 3x) exceeds 33% back to the cap, shedding 3x first → cash, so
+  a single-stock blow-up can't dominate the book (entries also skip already-capped names).
+  Constants live in `config.AGG_*`. Lot-level stop-loss/take-profit reuse
+  `state.sell_lot`; the per-lot reference is `Lot.tp_basis`.
+
 ## 5. Phase 1 design notes
 
 - **Synthetic dataset** — half buys / half sells; each a point-in-time market
@@ -260,8 +287,9 @@ is neutral over history (no historical news feed) and filled live at forecast ti
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 67 tests, offline (synthetic fixtures)
+uv run pytest                                   # 77 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
+uv run concinvest run --n 4000 --strategy aggressive   # the all-3x book (default: balanced)
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
@@ -285,7 +313,11 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   per-stock target fraction (6% floor) + independent-name rebalance, backtest
   final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
   underlying-dominance leverage trim, €500 min-trade skip (guardrails + forecast),
-  forecast book-limits (cash/holdings caps), safe-exit self-SIGTERM (own PID only).
+  forecast book-limits (cash/holdings caps), safe-exit self-SIGTERM (own PID only),
+  aggressive-strategy state (`sell_lot`, `tp_basis`, all-3x base case) + helpers
+  (stop-loss exit, take-profit skim/re-base/underlying seed, fixed-chunk entries,
+  per-name 33% cap + capped-name entry skip) + `run_aggressive_backtest` (3x/stock-only
+  book, end-of-window cap holds) + 3x-only forecast restriction.
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button

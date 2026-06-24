@@ -64,6 +64,20 @@ REBALANCE_BAND: float = 0.10
 # the walk-forward showed it cut the strategy's leverage edge and fought the crisis
 # dip-buy, lowering mean outperformance from +5.7% to +3.5%.)
 
+# --- Aggressive strategy (selectable; the base case above stays the default) ---
+# An all-3x book with minimal rules (no 33%/dominance/drawdown guardrails): start
+# 90% in 3x (per-name 18%) + 10% cash; cut a 3x lot fully at -60%; once a lot is
+# +60% skim an ML amount (>=30%) split 50/50 into cash and a permanent underlying
+# buy-and-hold lot; ML buy events deploy a fixed 10%-of-portfolio 3x chunk; a crisis
+# deploys the accumulated cash (buy-the-dip).
+AGG_BASE_SPLIT: dict[str, float] = {"3x": 0.18}  # per-name 18% all-3x; 5 names = 90%
+AGG_STOP_LOSS: float = 0.40  # exit a 3x lot when value <= 40% of cost basis (-60%)
+AGG_TAKE_PROFIT: float = 1.60  # skim eligible when value >= 160% of the tp-reference (+60%)
+AGG_MIN_TP_FRACTION: float = 0.30  # take profit on at least 30% of the position
+AGG_TP_TO_UNDERLYING: float = 0.50  # half of net profit-taking proceeds buy the underlying
+AGG_ENTRY_THRESHOLD: float = 0.55  # ML buy-confidence required to fire an entry event
+AGG_ENTRY_CHUNK: float = 0.10  # deploy 10% of portfolio value per entry event
+
 # --- Sentiment -----------------------------------------------------------
 # News-sentiment backend: "vader" (light, default) or "finbert" (transformers,
 # opt-in via the ``sentiment`` extra). FinBERT is loaded lazily on first use.

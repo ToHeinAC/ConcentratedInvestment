@@ -31,13 +31,13 @@ class Forecast:
         return asdict(self)
 
 
-def _candidates(snapshot: pd.Series) -> pd.DataFrame:
+def _candidates(snapshot: pd.Series, leverages: tuple[int, ...]) -> pd.DataFrame:
     """All buy/sell x leverage candidate feature rows for one snapshot."""
     base = {c: float(snapshot.get(c, 0.0)) for c in FEATURE_COLS}
     rows = []
     meta = []
     for is_sell in (0, 1):
-        for lev in config.LEVERAGE_TIERS:
+        for lev in leverages:
             row = dict(base)
             row["is_sell"] = is_sell
             row["leverage"] = lev
@@ -54,11 +54,13 @@ def forecast(
     snapshots: dict[str, pd.Series],
     portfolio_value: float = config.INITIAL_CAPITAL_EUR,
     threshold: float = 0.55,
+    leverages: tuple[int, ...] = config.LEVERAGE_TIERS,
 ) -> list[Forecast]:
-    """Emit the best above-threshold action per ticker (else no trade)."""
+    """Emit the best above-threshold action per ticker (else no trade). ``leverages``
+    restricts the candidate tiers — the aggressive strategy passes ``(3,)`` (3x only)."""
     out: list[Forecast] = []
     for ticker, snap in snapshots.items():
-        cand = _candidates(snap)
+        cand = _candidates(snap, leverages)
         conf = model.predict_confidence(cand)
         best = int(np.argmax(conf))
         if conf[best] < threshold:
