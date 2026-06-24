@@ -88,6 +88,20 @@ column contract is `ml.dataset.FEATURE_COLS`:
   history; live values at forecast time)
 - **Action encoding:** `is_sell, leverage`
 
+## Live portfolios (CSV files, outside SQLite)
+
+The Live tab's user portfolios are **not** in the SQLite DB — they are named CSV files
+under `data/portfolios/<name>.csv`, managed by
+[`concinvest.data.portfolio_store`](../src/concinvest/data/portfolio_store.py). One row
+per position so each tier carries its own buy date, plus one `CASH` row:
+
+| Column | Notes |
+|--------|-------|
+| ticker | stock symbol, or `CASH` for the cash row |
+| tier | 1 / 2 / 3 (stock / 2x / 3x); `0` for the cash row |
+| invested_eur | EUR invested in that position (or the cash balance) |
+| buy_date | ISO date the position was opened (empty for `CASH`) |
+
 ## Planned (Phase 3+)
 
 A positions/trade-ledger table for the Phase 4 rules + tax engine. Additive columns

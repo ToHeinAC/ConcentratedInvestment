@@ -57,6 +57,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   (additive `ALTER TABLE`s from `_MIGRATIONS` for pre-Phase-2 DBs); `upsert()` does
   generic `INSERT OR REPLACE`; `read_table()` reads back. Date columns normalised to
   ISO text PKs. See [SCHEMA.md](SCHEMA.md).
+- **`portfolio_store.py`** — persistence for the Live tab's user portfolios. Each named
+  portfolio is a CSV **file** under `data/portfolios/` (`list_portfolios` / `save_portfolio`
+  / `load_portfolio`, all with an optional `base` dir for tests). One row per position
+  (`ticker, tier, invested_eur, buy_date` — every tier carries its own buy date) plus a
+  `tier 0` / `CASH` row for the cash balance. Pure local file I/O (no network).
 
 ### `features/`
 - **`technical.py`** — pure pandas. `sma`/`ema`/`rsi`/`macd`/`bollinger` helpers and
@@ -188,14 +193,30 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   `concinvest validate`; the honest read vs any single-year backtest.
 
 ### `app/`
-- **`streamlit_app.py`** — UI in three tabs: **Current market** (the *actual*
+- **`streamlit_app.py`** — title bar carries two popovers: **ℹ️ About** (`_render_about`
+  — the `_VERSION` string + the 5 portfolio stocks from `tickers.STOCKS`) and **Compare
+  strategies**. UI in four tabs. **Live: Sample Portfolio** (first tab):
+  a **persisted, selectable** user portfolio. A dropdown lists the saved portfolios from
+  `data.portfolio_store` (or "New portfolio"); a 15-row `st.data_editor` grid holds one row
+  per position — the € **invested** and a **separate buy date** for each tier (stock / 2x /
+  3x) of each stock — plus cash; a **💾 Save / update** button writes it back to the chosen
+  CSV. `pipeline.build_dated_book` derives each lot's **current value** (invested marked
+  forward from *its own* buy date by the constant-leverage model), keeps the real **cost
+  basis**, and computes the book's **high-water**, shown as invested-vs-current metrics + a
+  per-lot P&L table. A **Run live
+  analysis** button fetches live news/sentiment and calls `pipeline.recommend_for_portfolio`,
+  surfacing the strategy's **actions** (default: drawdown de-risk / dominance / 33% trim;
+  aggressive: −60% stop-loss / +60% take-profit / cap — both need the derived cost basis)
+  and the **ML + sentiment signals** (the 5-field forecast sized to that book) plus the live
+  analyst/sentiment summary. Reuses the trained model from `_load` (no retrain). The other
+  three are the ML views (prefixed **ML:**): **ML: Current market** (the *actual*
   end-of-backtest book from `BacktestResult.final_state` — real per-tier values and live
   cash level, not the static template; Plotly donut; cross-asset correlation with three
   views — 5 stocks vs NASDAQ / all assets / one stock vs all as a point chart — and a
   ticker→name legend popover; a simplified analyst/sentiment summary — rating, news tone,
-  target upside), **Forecast & Backtest** (5-field forecast sized to the live book,
+  target upside), **ML: Forecast & Backtest** (5-field forecast sized to the live book,
   portfolio-vs-NASDAQ curve as cumulative %, feature importances),
-  **Strategy** (per asset, three panels on a shared x-axis with a legend: price with
+  **ML: Strategy** (per asset, three panels on a shared x-axis with a legend: price with
   aggregated buy/sell markers, a per-tier balance-evolution chart from
   `BacktestResult.tier_curve` with per-tier markers (actual € each), and NASDAQ; the full
   trade table behind a popover button. Markers drawn on the decision day T-1 — interactive
@@ -209,10 +230,20 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 ### Top level
 - **`config.py`** — paths, dates (`START_DATE` 2020-01-01), portfolio/risk/tax
   constants, `BENCHMARK_TICKER` (`^IXIC`), `STREAMLIT_PORT` (8505).
-- **`pipeline.py`** — `run_phase1` / `fetch_and_store` orchestration; `daily_etl`
+- **`pipeline.py`** — `run_phase1` / `fetch_and_store` orchestration (`Phase1Result`
+  also carries the feature `panel` for the Live tab); `daily_etl`
   (the Phase 5 cron building block — `fetch_and_store` + a dated `sentiment_analyst`
   snapshot via `_fetch_sentiment(as_of=…)`, so the live analyst signals accumulate
-  history).
+  history); `build_dated_book(positions, market, cash)` — pure: turns **per-position dated
+  invested amounts** (`ticker, tier, invested_eur, buy_date` — each tier its own date) into
+  a `PortfolioState` (current value = invested marked forward from its buy date by
+  `_lot_value_path`'s constant-leverage model, real cost basis, derived high-water);
+  `recommend_for_portfolio(state, model, panel, market, strategy, …)` — side-effect-free
+  live recommendations for a **user-supplied** book (reuses a trained model): live
+  sentiment → forecast sized to the book (`apply_book_limits`) + overlay + the strategy's
+  value/cost-aware actions (`_strategy_actions`: `rules.apply_guardrails` for default;
+  `_agg_stop_loss` + `_agg_take_profit` + `trim_overweight` for aggressive; on a deep copy).
+  Powers the Live tab.
 - **`cli.py`** — `concinvest {info,update,run,validate}`; `update --sentiment` runs
   `daily_etl` (the daily cron entry, wrapped by `scripts/daily_update.sh`).
 

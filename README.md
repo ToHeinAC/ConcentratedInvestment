@@ -24,7 +24,7 @@ for the phased build plan.
 | Münchener Rück | `MUV2.DE` |
 | Freeport-McMoRan | `FCX` |
 | Tesla | `TSLA` |
-| Berkshire Hathaway B | `BRK-B` |
+| Samsung Electronics | `005930.KS` |
 
 Base case: **90% stocks / 10% cash**, mostly **no trades** unless the data triggers one. Long-only
 2x/3x leverage allowed, with strict per-name (33%), daily-sell (<10%), and drawdown (20%) limits.
@@ -61,6 +61,15 @@ uv run pytest
 # Launch the Streamlit app (port 8505 by project convention)
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
+
+The app opens on **Live: Sample Portfolio** — pick a saved portfolio (or start a new one;
+they persist as CSV files under `data/portfolios/`) and enter the € **invested** with a
+**separate buy date** for each position (stock/2x/3x of each stock), plus cash; **💾 Save /
+update** persists it. Current values, cost basis and drawdown are derived from prices since
+each position's buy date. Press **Run live analysis** for strategy-based, news/sentiment-aware
+buy/sell recommendations sized to your book (incl. the aggressive strategy's −60% stop-loss /
++60% take-profit, which use the derived cost basis). The other three tabs (**ML: Current
+market / Forecast & Backtest / Strategy**) show the model's own backtested book vs. NASDAQ.
 
 Without `uv` you can also run directly:
 

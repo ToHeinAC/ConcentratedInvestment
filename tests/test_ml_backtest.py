@@ -355,6 +355,77 @@ def test_forecast_restricts_to_3x_when_requested(synth_market, synth_raw):
     assert fcs and all(f.leverage == "3x" for f in fcs)
 
 
+def test_build_dated_book_per_tier_dates(synth_market):
+    from concinvest import pipeline
+
+    t = next(iter(synth_market))
+    closes = pd.Series(synth_market[t]["close"].values,
+                       index=pd.to_datetime(list(synth_market[t].index))).sort_index()
+    early, late = closes.index[len(closes) // 3], closes.index[2 * len(closes) // 3]
+    # Same name, two tiers, each with its **own** buy date — evaluated separately.
+    positions = [
+        {"ticker": t, "tier": 1, "invested_eur": 1000.0, "buy_date": early},
+        {"ticker": t, "tier": 3, "invested_eur": 1000.0, "buy_date": late},
+    ]
+    st = pipeline.build_dated_book(positions, synth_market, cash=500.0)
+
+    assert st.cash == 500.0
+    assert all(abs(l.cost_basis - 1000.0) < 1e-9 for l in st.lots)  # invested = cost basis
+    h1 = closes[closes.index >= early]
+    lot1 = next(l for l in st.lots if l.tier == 1)
+    assert abs(lot1.value - 1000.0 * h1.iloc[-1] / h1.iloc[0]) < 1e-6  # 1x from early date
+    # 3x marked from its own (later) buy date: daily-rebalanced 3x compounding.
+    h3 = closes[closes.index >= late]
+    rets3 = h3.pct_change().fillna(0.0)
+    lot3 = next(l for l in st.lots if l.tier == 3)
+    assert abs(lot3.value - 1000.0 * (1.0 + 3.0 * rets3).cumprod().iloc[-1]) < 1e-6
+    assert lot3.tp_basis == 1000.0  # take-profit reference starts at cost
+    assert st.high_water >= st.total_value() - 1e-6  # peak of the marked book path
+
+
+def test_portfolio_store_roundtrip(tmp_path):
+    from concinvest.data import portfolio_store as ps
+
+    positions = pd.DataFrame(
+        [{"ticker": "TSLA", "tier": 1, "invested_eur": 9000.0,
+          "buy_date": pd.Timestamp("2024-01-15")},
+         {"ticker": "TSLA", "tier": 3, "invested_eur": 4500.0,
+          "buy_date": pd.Timestamp("2024-06-01")}],
+        columns=ps.POSITION_COLS,
+    )
+    ps.save_portfolio("mybook", positions, cash=7000.0, base=tmp_path)
+    assert ps.list_portfolios(base=tmp_path) == ["mybook"]
+    loaded, cash = ps.load_portfolio("mybook", base=tmp_path)
+    assert cash == 7000.0
+    assert list(loaded.columns) == ps.POSITION_COLS
+    assert len(loaded) == 2 and "CASH" not in set(loaded["ticker"])  # cash row split out
+    # Per-tier buy dates survive the round-trip.
+    assert loaded.set_index("tier").loc[3, "buy_date"] == pd.Timestamp("2024-06-01")
+
+
+def test_recommend_for_portfolio_user_book(synth_market, synth_raw):
+    from concinvest import pipeline
+
+    panel, prices = _panel_and_prices(synth_market, synth_raw)
+    X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=12)
+    trained = model.train(X, y, n_estimators=50, n_splits=3)
+    # A concentrated user book: one name way over the 33% cap -> a guardrail trim fires.
+    names = list(synth_market)
+    st = pstate.PortfolioState(cash=5_000.0)
+    st.lots = [pstate.Lot(names[0], 1, 60_000.0, 60_000.0),
+               pstate.Lot(names[0], 3, 20_000.0, 20_000.0),
+               pstate.Lot(names[1], 1, 15_000.0, 15_000.0)]
+    before = st.total_value()
+    fcs, sent, guard = pipeline.recommend_for_portfolio(
+        st, trained, panel, synth_market, with_sentiment=False
+    )
+    assert sent.empty  # sentiment disabled -> no live fetch
+    assert isinstance(fcs, list)
+    # The over-cap name is trimmed, riskiest tier first; side-effect-free on the input.
+    assert any(t.ticker == names[0] and t.action == "sell" for t in guard)
+    assert st.total_value() == before  # guardrails ran on a copy, not the caller's state
+
+
 def test_backtest_produces_curve(synth_market, synth_raw):
     panel, prices = _panel_and_prices(synth_market, synth_raw)
     X, y = dataset.generate_dataset(panel, prices, n=600, horizon=20, seed=3)

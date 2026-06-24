@@ -34,6 +34,7 @@ class Phase1Result:
     correlation: pd.DataFrame
     sentiment: pd.DataFrame  # live analyst/sentiment rows (empty if disabled)
     nasdaq: pd.Series  # raw NASDAQ close (for the Strategy tab)
+    panel: pd.DataFrame  # (date, ticker) feature panel (reused by the Live tab)
 
 
 def fetch_and_store(
@@ -216,8 +217,118 @@ def run_phase1(
     return Phase1Result(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,
-        sentiment=sentiment_df, nasdaq=nasdaq,
+        sentiment=sentiment_df, nasdaq=nasdaq, panel=panel,
     )
+
+
+def _lot_value_path(closes: pd.Series, tier: int, invested: float, entry) -> pd.Series:
+    """Value path of an ``invested``-EUR tier-``tier`` lot opened at ``entry``, marked by
+    the project's daily-rebalanced constant-leverage model (``value *= 1 + tier*return``
+    each day) up to the last close. Empty if ``entry`` is past the last close."""
+    held = closes[closes.index >= pd.Timestamp(entry)]
+    if held.empty:
+        return pd.Series(dtype=float)
+    rets = held.pct_change().fillna(0.0)
+    return invested * (1.0 + tier * rets).cumprod()
+
+
+def build_dated_book(positions, market: dict[str, pd.DataFrame], cash: float):
+    """Build a ``PortfolioState`` from **per-position dated invested amounts**.
+
+    ``positions`` is a DataFrame or iterable of mappings with ``ticker, tier,
+    invested_eur, buy_date`` — the EUR invested in one ``(stock, tier)`` on **its own buy
+    date** (each tier's date is evaluated separately). A lot's **cost basis** is the
+    invested amount (the real tax basis), its **current value** is that amount marked
+    forward to the last close by the constant-leverage model (`_lot_value_path`), and its
+    take-profit reference starts at cost. The book's **high-water** is the peak of the
+    combined daily value (cash + lots, 0 before each lot's buy date, held flat across
+    gaps), so the drawdown guardrail is meaningful. Pure (no network) — derives everything
+    from the already-fetched prices."""
+    from .portfolio.state import Lot, PortfolioState
+
+    if isinstance(positions, pd.DataFrame):
+        positions = positions.to_dict("records")
+    lots: list[Lot] = []
+    paths: list[pd.Series] = []
+    for p in positions:
+        ticker = str(p["ticker"])
+        invested = float(p.get("invested_eur") or 0.0)
+        if invested <= 0 or ticker not in market:
+            continue
+        tier = int(p["tier"])
+        df = market[ticker]
+        closes = pd.Series(df["close"].values, index=pd.to_datetime(list(df.index))).sort_index()
+        path = _lot_value_path(closes, tier, invested, p["buy_date"])
+        current = float(path.iloc[-1]) if not path.empty else invested
+        lots.append(Lot(ticker, tier, invested, current, tp_basis=invested))
+        if not path.empty:
+            paths.append(path)
+
+    state = PortfolioState(cash=float(cash), lots=lots)
+    if paths:
+        idx = paths[0].index
+        for p in paths[1:]:
+            idx = idx.union(p.index)
+        total = pd.Series(float(cash), index=idx)
+        for p in paths:  # ffill holds across gaps; leading pre-entry NaN -> 0 (not held)
+            total = total.add(p.reindex(idx).ffill().fillna(0.0), fill_value=0.0)
+        state.high_water = float(total.max())
+    else:
+        state.high_water = state.total_value()
+    return state
+
+
+def _strategy_actions(state, trained, panel, strategy):
+    """Deterministic, value/cost-aware actions for ``state`` under ``strategy`` (mutates
+    the passed copy). Default: the full guardrails (drawdown de-risk now fires off the
+    derived high-water, plus underlying-dominance and the 33% trim). Aggressive: the
+    real lot-level stop-loss (−60% vs cost) + take-profit (+60% skim) + 33% cap."""
+    from .backtest import engine
+    from .portfolio import rules
+
+    if strategy != "aggressive":
+        return rules.apply_guardrails(state)
+    last = panel.index.get_level_values("date").unique().sort_values()[-5:]
+    sell_conf = engine._name_confidence(trained, panel, pd.DatetimeIndex(last),
+                                        is_sell=1, leverage=3)
+    sell_row = sell_conf.iloc[-1] if not sell_conf.empty else None
+    return (engine._agg_stop_loss(state)
+            + engine._agg_take_profit(state, sell_row)
+            + rules.trim_overweight(state))
+
+
+def recommend_for_portfolio(
+    state,
+    trained: model.TrainedModel,
+    panel: pd.DataFrame,
+    market: dict[str, pd.DataFrame],
+    *,
+    strategy: str = "default",
+    with_sentiment: bool = True,
+    db_path=None,
+) -> tuple[list[Forecast], pd.DataFrame, list]:
+    """Live action recommendations for a **user-supplied** book under ``strategy``.
+
+    Reuses an already-trained model (no retraining): fetches live analyst/sentiment,
+    scores the latest market snapshot per stock, sizes the 5-field forecast to the user's
+    book (cash on hand / open positions), tilts it by the sentiment overlay, and adds the
+    strategy's deterministic value/cost-aware actions (`_strategy_actions`). Side-effect-
+    free — the actions run on a copy of ``state``. Returns
+    ``(forecasts, sentiment_df, action_trades)``."""
+    import copy
+
+    sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
+                    if with_sentiment else pd.DataFrame())
+    snaps = _live_snapshots(panel, sentiment_df)
+    latest_close = {t: float(df["close"].iloc[-1]) for t, df in market.items()}
+    leverages = (3,) if strategy == "aggressive" else config.LEVERAGE_TIERS
+    fcs = forecast.forecast(trained, snaps, portfolio_value=state.total_value(),
+                            leverages=leverages)
+    fcs = overlay.apply_overlay(fcs, sentiment_df, latest_close)
+    cash, held = _book_cash_held(state)
+    fcs = forecast.apply_book_limits(fcs, cash, held)
+    actions = _strategy_actions(copy.deepcopy(state), trained, panel, strategy)
+    return fcs, sentiment_df, actions
 
 
 def _nasdaq_series(raw: dict, market: dict) -> pd.Series:

@@ -11,8 +11,9 @@ Compact, current-state reference for **ConcentratedInvestment**. Domain spec:
 ML recommendation system for a **fixed concentrated 5-stock portfolio** fed by daily
 Yahoo Finance data, surfaced through a Streamlit UI.
 
-**Stocks (v1, max 5):** `SIE.DE`, `MUV2.DE`, `FCX`, `TSLA`, `BRK-B` (later
-user-configurable; `BRK-B` replaced `8001.T`, which is not 3x-tradable at the broker).
+**Stocks (v1, max 5):** `SIE.DE`, `MUV2.DE`, `FCX`, `TSLA`, `005930.KS` (later
+user-configurable; `005930.KS` Samsung Electronics replaced `8001.T` ITOCHU, which is
+not 3x-tradable at the broker).
 
 **Success metric:** backtested total return after German 25% Abgeltungsteuer (with
 loss offsetting) must beat **NASDAQ (`^IXIC`)** over `2020-01-01 → present`, validated
@@ -44,7 +45,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 Package `src/concinvest/`. Full detail in [`docs/architecture.md`](docs/architecture.md).
 
 ```
-data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite)
+data/      tickers.py · fetch.py (yfinance, all network) · store.py (SQLite) · portfolio_store.py (Live-tab CSV portfolios)
 features/  technical.py · cross_asset.py · sentiment.py (VADER/FinBERT) · analyst.py · options.py
 ml/        dataset.py (panel + synthetic gen) · model.py (RF+TSCV) · forecast.py (5 fields) · overlay.py (live sentiment tilt)
 portfolio/ state.py (leveraged lots+cash) · tax.py (Abgeltungsteuer) · rules.py (guardrails)
@@ -70,7 +71,7 @@ is neutral over history (no historical news feed) and filled live at forecast ti
 ## 4b. Strategies (selectable in the UI / `concinvest run --strategy`)
 
 Two backtest/forecast books share the model, panel, tax, dividends, and
-`BacktestResult` shape (so all three UI tabs render either). **Default** is selected
+`BacktestResult` shape (so every UI tab renders either). **Default** is selected
 unless changed.
 
 - **Default (balanced)** — `backtest.run_forecast_backtest`: the guardrailed Story.md
@@ -262,13 +263,30 @@ unless changed.
   sell is decomposed by `_sell_proportional` — selling logic unchanged, returns identical)
   into `BacktestResult.trades`, each day's per-`(ticker, tier)` value into
   `BacktestResult.tier_curve`, and each day's cash balance into `BacktestResult.cash_curve`.
-  The **Strategy tab** stacks three panels on a **shared
+  The **ML: Strategy tab** stacks three panels on a **shared
   x-axis** with a legend: the price curve with aggregated buy/sell markers (total €), the
   **per-tier balance-evolution chart** (stock / 2x / 3x from `tier_curve`) with per-tier
   markers (actual € each), and NASDAQ; the full buy/sell table sits behind a **popover
   button**. Markers are drawn on the decision day (T-1, the signal bar), display-only. The
   asset selector also offers **Cash** as a 6th option — cash (€) over NASDAQ on a shared
   x-axis, from `cash_curve`.
+- **Live: Sample Portfolio tab** (first tab) — a **persisted, selectable** user book. A
+  dropdown lists saved portfolios from `data.portfolio_store` (named CSV **files** under
+  `data/portfolios/`, one row per position + a cash row; or "New portfolio"); a 15-row
+  grid holds the € **invested** and a **separate buy date for each position** (stock / 2x /
+  3x of each stock), plus cash; **💾 Save / update** persists it to the chosen file.
+  `pipeline.build_dated_book` derives each lot's **current value** (invested marked forward
+  from *its own* buy date by the daily-rebalanced constant-leverage model, `_lot_value_path`),
+  keeps the real **cost basis**, and computes the book's **high-water** (peak of the marked
+  book path) — shown as invested-vs-current metrics + a per-lot P&L table. A **Run live
+  analysis** button calls `pipeline.recommend_for_portfolio`, which (reusing the already-
+  trained model) fetches live news/sentiment, sizes the 5-field forecast to that book
+  (`apply_book_limits`: buys ≤ cash, sells ≤ held), applies the sentiment overlay, and adds
+  the chosen strategy's deterministic, **value/cost-aware** actions (`_strategy_actions`,
+  on a deep copy → side-effect-free): default → `rules.apply_guardrails` (the 20% drawdown
+  de-risk now fires off the derived high-water, plus dominance + 33% trim); aggressive →
+  the real lot-level **−60% stop-loss** + **+60% take-profit** skim + 33% cap (these need
+  the derived cost basis). The other three tabs are the ML views, prefixed **ML:**.
 - **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
   the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
   price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
@@ -287,7 +305,7 @@ unless changed.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 77 tests, offline (synthetic fixtures)
+uv run pytest                                   # 82 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest run --n 4000 --strategy aggressive   # the all-3x book (default: balanced)
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
@@ -313,7 +331,11 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   per-stock target fraction (6% floor) + independent-name rebalance, backtest
   final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
   underlying-dominance leverage trim, €500 min-trade skip (guardrails + forecast),
-  forecast book-limits (cash/holdings caps), safe-exit self-SIGTERM (own PID only),
+  forecast book-limits (cash/holdings caps), dated-book derivation
+  (`build_dated_book` — per-tier buy dates → leveraged current value + cost basis +
+  high-water), portfolio-store CSV save/load round-trip (per-position dates preserved),
+  and user-book live recommendations (`recommend_for_portfolio` — actions fire +
+  side-effect-free), safe-exit self-SIGTERM (own PID only),
   aggressive-strategy state (`sell_lot`, `tp_basis`, all-3x base case) + helpers
   (stop-loss exit, take-profit skim/re-base/underlying seed, fixed-chunk entries,
   per-name 33% cap + capped-name entry skip) + `run_aggressive_backtest` (3x/stock-only
@@ -346,8 +368,10 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   cross-asset + dated `sentiment_analyst` snapshot) behind `concinvest update
   --sentiment`, wrapped by `scripts/daily_update.sh` for ~22:00 Europe/Berlin
   scheduling; the dated snapshots accumulate the analyst-signal history needed to make
-  the overlay trainable. **Remaining:** correlation/**regime detection** UI (rising-
-  market detection), Docker deploy.
+  the overlay trainable. **Live: Sample Portfolio tab** — users get strategy-based,
+  news/sentiment-aware action recommendations for their own book
+  (`pipeline.recommend_for_portfolio`; §5d). **Remaining:** correlation/**regime
+  detection** UI (rising-market detection), Docker deploy.
 
 ## 8. Conventions
 

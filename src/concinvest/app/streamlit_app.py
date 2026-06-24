@@ -17,7 +17,7 @@ import streamlit as st
 
 from concinvest import config
 from concinvest.app import exit_button
-from concinvest.data import tickers
+from concinvest.data import portfolio_store, tickers
 from concinvest.ml.forecast import forecasts_to_frame
 
 
@@ -86,6 +86,8 @@ def _load(n_dataset: int, with_sentiment: bool, strategy: str):
     res = run_phase1(n_dataset=n_dataset, with_sentiment=with_sentiment, strategy=strategy)
     return {
         "strategy": strategy,
+        "model": res.model,      # reused by the Live tab to score a user-supplied book
+        "panel": res.panel,      # (date, ticker) feature panel for the latest snapshot
         "forecasts": forecasts_to_frame(res.forecasts),
         "curve": res.backtest.curve,
         "portfolio_return": res.backtest.portfolio_return,
@@ -137,11 +139,27 @@ def _render_strategy_help(st) -> None:
                    "share the same model, data, tax and dividend handling.")
 
 
+_VERSION = "V1.0"
+
+
+def _render_about(st) -> None:
+    """Info popover (next to the title): version + the 5 portfolio stocks."""
+    with st.popover("ℹ️ About", width="stretch"):
+        st.markdown(f"**ConcentratedInvestment** · {_VERSION}")
+        st.caption("The 5 stocks under consideration:")
+        st.dataframe(
+            pd.DataFrame({"Ticker": list(tickers.STOCKS),
+                          "Name": list(tickers.STOCKS.values())}),
+            width="stretch", hide_index=True,
+        )
+
+
 def main() -> None:
     st.set_page_config(page_title="ConcentratedInvestment", page_icon="📈", layout="wide")
-    title_col, help_col = st.columns([4, 1])
+    title_col, about_col, help_col = st.columns([4, 1, 1])
     title_col.title("ConcentratedInvestment")
-    title_col.caption("V1.0")
+    with about_col:
+        _render_about(st)
     with help_col:
         _render_strategy_help(st)
 
@@ -171,9 +189,12 @@ def main() -> None:
 
     data = _load(n_dataset, with_sentiment, strategy)
 
-    tab_current, tab_forecast, tab_strategy = st.tabs(
-        ["Current market", "Forecast & Backtest", "Strategy"]
+    tab_live, tab_current, tab_forecast, tab_strategy = st.tabs(
+        ["Live: Sample Portfolio", "ML: Current market",
+         "ML: Forecast & Backtest", "ML: Strategy"]
     )
+    with tab_live:
+        _render_live(data)
     with tab_current:
         _render_current(data)
     with tab_forecast:
@@ -182,6 +203,181 @@ def main() -> None:
         _render_strategy(data)
 
     st.caption(f"Benchmark: {config.BENCHMARK_TICKER} · start {config.START_DATE}")
+
+
+_POS_TIER = {"stock": 1, "2x": 2, "3x": 3}  # editor position label -> tier
+_DEFAULT_INVESTED = {1: 9000.0, 2: 4500.0, 3: 4500.0}  # base-case sample € per tier
+
+
+def _default_entry_date(market: dict):
+    """One year before the latest close (clamped to the data start) — a sane default."""
+    last = max(pd.Timestamp(df.index[-1]) for df in market.values())
+    return max(pd.Timestamp(config.START_DATE), last - pd.DateOffset(years=1)).date()
+
+
+def _default_positions(market: dict) -> pd.DataFrame:
+    """Sample book: one row per (stock, tier) — the Story.md base case (9k/4.5k/4.5k),
+    each bought at the default entry date. Schema matches ``portfolio_store.POSITION_COLS``."""
+    entry = _default_entry_date(market)
+    return pd.DataFrame(
+        [{"ticker": t, "tier": tier, "invested_eur": _DEFAULT_INVESTED[tier],
+          "buy_date": pd.Timestamp(entry)}
+         for t in tickers.STOCKS for tier in (1, 2, 3)],
+        columns=portfolio_store.POSITION_COLS,
+    )
+
+
+def _positions_to_editor(positions: pd.DataFrame, market: dict) -> pd.DataFrame:
+    """Saved positions -> the 15-row editor grid (every stock × tier, missing → 0)."""
+    entry = _default_entry_date(market)
+    held = {(str(r.ticker), int(r.tier)): r for r in positions.itertuples()}
+    rows = []
+    for t in tickers.STOCKS:
+        for label, tier in _POS_TIER.items():
+            r = held.get((t, tier))
+            bdate = (pd.Timestamp(r.buy_date).date()
+                     if r is not None and pd.notna(r.buy_date) else entry)
+            rows.append({"Stock": t, "Name": tickers.NAMES.get(t, t), "Position": label,
+                         "Invested €": float(r.invested_eur) if r is not None else 0.0,
+                         "Buy date": bdate})
+    return pd.DataFrame(rows)
+
+
+def _editor_to_positions(edited: pd.DataFrame) -> pd.DataFrame:
+    """Editor grid -> ``portfolio_store.POSITION_COLS`` (all rows, dates preserved)."""
+    return pd.DataFrame(
+        [{"ticker": str(r["Stock"]), "tier": _POS_TIER[r["Position"]],
+          "invested_eur": float(r["Invested €"] or 0.0),
+          "buy_date": pd.Timestamp(r["Buy date"])}
+         for _, r in edited.iterrows()],
+        columns=portfolio_store.POSITION_COLS,
+    )
+
+
+def _derived_frame(state) -> pd.DataFrame:
+    """Per-lot invested (cost) vs current value + P&L%, plus a cash row."""
+    rows = [{"Stock": l.ticker, "Name": tickers.NAMES.get(l.ticker, l.ticker),
+             "position": _TIER_LABEL[l.tier], "invested €": l.cost_basis,
+             "current €": l.value, "P&L %": l.value / l.cost_basis - 1.0}
+            for l in state.lots]
+    rows.append({"Stock": "CASH", "Name": "Cash", "position": "cash",
+                 "invested €": state.cash, "current €": state.cash, "P&L %": 0.0})
+    return pd.DataFrame(rows)
+
+
+def _guard_to_frame(trades) -> pd.DataFrame:
+    """Guardrail Trade list -> display frame (name + tier + €), newest rule first."""
+    cols = ["Stock", "Name", "action", "position", "amount_eur"]
+    if not trades:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(
+        [{"Stock": t.ticker, "Name": tickers.NAMES.get(t.ticker, t.ticker),
+          "action": t.action, "position": _tier_label(t.tier),
+          "amount_eur": t.amount_eur} for t in trades],
+        columns=cols,
+    )
+
+
+_NEW_PORTFOLIO = "➕ New portfolio…"
+
+
+def _render_live(data: dict) -> None:
+    """First tab: a persisted, selectable user portfolio (per-position buy dates) with a
+    live (news + sentiment) analysis and strategy-based action recommendations."""
+    from concinvest.pipeline import build_dated_book
+
+    market = data.get("market", {})
+    strat = "Aggressive (3x)" if data.get("strategy") == "aggressive" else "Default (balanced)"
+    st.subheader("Your portfolio")
+    st.caption(f"Pick a saved portfolio or start a new one. Enter the € **invested** and a "
+               f"separate **buy date** for each position (stock / 2x / 3x of each stock); "
+               f"current values are derived from prices since each buy date. Recommendations "
+               f"follow the **{strat}** strategy selected in the sidebar.")
+    if not market:
+        st.info("Press **Run / refresh** in the sidebar first to load market data.")
+        return
+
+    names = portfolio_store.list_portfolios()
+    choice = st.selectbox("Portfolio file", names + [_NEW_PORTFOLIO], key="live_pf_select")
+    if choice == _NEW_PORTFOLIO:
+        name = st.text_input("New portfolio name", value="my-portfolio")
+        seed_positions, seed_cash, seed_key = _default_positions(market), 10000.0, "new"
+    else:
+        name = choice
+        seed_positions, seed_cash, seed_key = (*portfolio_store.load_portfolio(name), name)
+
+    edited = st.data_editor(
+        _positions_to_editor(seed_positions, market), hide_index=True, width="stretch",
+        num_rows="fixed", disabled=["Stock", "Name", "Position"],
+        column_config={
+            "Invested €": st.column_config.NumberColumn("Invested €", min_value=0.0,
+                                                        format="€%.0f"),
+            "Buy date": st.column_config.DateColumn(
+                "Buy date", min_value=pd.Timestamp(config.START_DATE).date()),
+        },
+        key=f"live_editor::{seed_key}",
+    )
+    cash = st.number_input("Cash (€)", min_value=0.0, value=float(seed_cash), step=1000.0,
+                           key=f"live_cash::{seed_key}")
+    if st.button(f"💾 Save / update '{name}'") and name:
+        portfolio_store.save_portfolio(name, _editor_to_positions(edited), cash)
+        st.success(f"Saved portfolio '{name}'.")
+
+    state = build_dated_book(_editor_to_positions(edited), market, cash)
+    invested = sum(l.cost_basis for l in state.lots) + state.cash
+    current = state.total_value()
+    drawdown = (state.high_water - current) / state.high_water if state.high_water else 0.0
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Invested (cost)", f"€{invested:,.0f}")
+    m2.metric("Current value", f"€{current:,.0f}", delta=f"{current / invested - 1:+.1%}"
+              if invested else None)
+    m3.metric("Drawdown from peak", f"{drawdown:.1%}")
+    with st.expander("Derived positions (invested vs current)", expanded=False):
+        st.dataframe(_derived_frame(state).style.format(
+            {"invested €": "€{:,.0f}", "current €": "€{:,.0f}", "P&L %": "{:+.1%}"}),
+            width="stretch", hide_index=True)
+
+    if st.button("Run live analysis (news + sentiment)", type="primary"):
+        with st.spinner("Fetching live news/sentiment and scoring your book…"):
+            from concinvest.pipeline import recommend_for_portfolio
+
+            fcs, sent, actions = recommend_for_portfolio(
+                state, data["model"], data["panel"], market,
+                strategy=data.get("strategy", "default"), with_sentiment=True,
+            )
+            st.session_state["live_reco"] = {
+                "forecasts": forecasts_to_frame(fcs),
+                "guard": _guard_to_frame(actions),
+                "sentiment": sent,
+            }
+
+    reco = st.session_state.get("live_reco")
+    if not reco:
+        st.info("Set your holdings and press **Run live analysis** for recommendations.")
+        return
+
+    st.subheader("Strategy actions")
+    if reco["guard"].empty:
+        st.success("No mandatory action — your book is within the strategy's risk limits.")
+    else:
+        st.dataframe(reco["guard"].style.format({"amount_eur": "€{:,.0f}"}),
+                     width="stretch", hide_index=True)
+        caption = ("Stop-loss exits (−60% vs cost), take-profit skims (+60%) and the 33% "
+                   "per-name cap." if data.get("strategy") == "aggressive"
+                   else "Mandatory de-risking sells (20% drawdown de-risk, 33% per-name "
+                        "trim, underlying ≥ 2x+3x). Riskiest tier first; orders < €500 skipped.")
+        st.caption(caption)
+
+    st.subheader("ML + news/sentiment signals")
+    fc = reco["forecasts"]
+    if fc.empty:
+        st.success("Base case: **hold** — no trade triggered by current conditions.")
+    else:
+        st.dataframe(fc.style.format({"amount_eur": "€{:,.0f}", "confidence": "{:.0%}"}),
+                     width="stretch", hide_index=True)
+        st.caption("Best above-threshold action per stock, sized to your book (buys capped "
+                   "at cash, sells at the position held) and tilted by live news/sentiment.")
+    _render_sentiment(reco["sentiment"], data.get("market", {}))
 
 
 def _render_current(data: dict) -> None:
