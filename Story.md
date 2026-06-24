@@ -16,7 +16,7 @@ The following portfolio rules must be applied:
     - Münchener Rückversicherungs-Gesellschaft Aktiengesellschaft in München (MUV2.DE)
     - Freeport-McMoRan Inc. (FCX)
     - Tesla, Inc. (TSLA)
-    - ITOCHU Corporation (8001.T)
+    - Berkshire Hathaway Inc. Class B (BRK-B)  (replaced ITOCHU Corporation / 8001.T, which is not 3x-tradable at the broker)
     later, a user may be able to set his own 5 stocks (not more than 5!)
 - Base case scenario is to be invested in the 5 stocks above with 90% allocation and 10% cash; also the base case is that most of the time i.e. most of the days no trades are made (there have to be severe reasons from the data that trigger a trade)
 - Allocations must be obey the following rules:

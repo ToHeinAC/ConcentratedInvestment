@@ -13,7 +13,7 @@ STOCKS: dict[str, str] = {
     "MUV2.DE": "Münchener Rückversicherungs-Gesellschaft AG",
     "FCX": "Freeport-McMoRan Inc.",
     "TSLA": "Tesla, Inc.",
-    "8001.T": "ITOCHU Corporation",
+    "BRK-B": "Berkshire Hathaway Inc. Class B",
 }
 
 # --- Global indices (5 picks) --------------------------------------------
@@ -96,5 +96,5 @@ GERMAN_QUERY: dict[str, str] = {
     "MUV2.DE": "Munich Re",
     "FCX": "Freeport-McMoRan",
     "TSLA": "Tesla",
-    "8001.T": "Itochu",
+    "BRK-B": "Berkshire Hathaway",
 }

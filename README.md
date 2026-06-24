@@ -24,7 +24,7 @@ for the phased build plan.
 | Münchener Rück | `MUV2.DE` |
 | Freeport-McMoRan | `FCX` |
 | Tesla | `TSLA` |
-| ITOCHU | `8001.T` |
+| Berkshire Hathaway B | `BRK-B` |
 
 Base case: **90% stocks / 10% cash**, mostly **no trades** unless the data triggers one. Long-only
 2x/3x leverage allowed, with strict per-name (33%), daily-sell (<10%), and drawdown (20%) limits.

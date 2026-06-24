@@ -11,8 +11,8 @@ Compact, current-state reference for **ConcentratedInvestment**. Domain spec:
 ML recommendation system for a **fixed concentrated 5-stock portfolio** fed by daily
 Yahoo Finance data, surfaced through a Streamlit UI.
 
-**Stocks (v1, max 5):** `SIE.DE`, `MUV2.DE`, `FCX`, `TSLA`, `8001.T` (later
-user-configurable).
+**Stocks (v1, max 5):** `SIE.DE`, `MUV2.DE`, `FCX`, `TSLA`, `BRK-B` (later
+user-configurable; `BRK-B` replaced `8001.T`, which is not 3x-tradable at the broker).
 
 **Success metric:** backtested total return after German 25% Abgeltungsteuer (with
 loss offsetting) must beat **NASDAQ (`^IXIC`)** over `2020-01-01 → present`, validated
