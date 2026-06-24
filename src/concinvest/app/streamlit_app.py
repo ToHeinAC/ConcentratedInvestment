@@ -318,22 +318,23 @@ def _render_live(data: dict) -> None:
         name = choice
         seed_positions, seed_cash, seed_key = (*portfolio_store.load_portfolio(name), name)
 
-    edited = st.data_editor(
-        _positions_to_editor(seed_positions), hide_index=True, width="stretch",
-        num_rows="fixed", disabled=["Stock", "Name", "Position"],
-        column_config={
-            "Invested €": st.column_config.NumberColumn("Invested €", min_value=0.0,
-                                                        format="€%.0f"),
-            "Buy date": st.column_config.DateColumn(
-                "Buy date", min_value=pd.Timestamp(config.START_DATE).date()),
-        },
-        key=f"live_editor::{seed_key}",
-    )
-    cash = st.number_input("Cash (€)", min_value=0.0, value=float(seed_cash), step=1000.0,
-                           key=f"live_cash::{seed_key}")
-    if st.button(f"💾 Save / update '{name}'") and name:
-        portfolio_store.save_portfolio(name, _editor_to_positions(edited), cash)
-        st.success(f"Saved portfolio '{name}'.")
+    with st.expander("Edit positions", expanded=False):
+        edited = st.data_editor(
+            _positions_to_editor(seed_positions), hide_index=True, width="stretch",
+            num_rows="fixed", disabled=["Stock", "Name", "Position"],
+            column_config={
+                "Invested €": st.column_config.NumberColumn("Invested €", min_value=0.0,
+                                                            format="€%.0f"),
+                "Buy date": st.column_config.DateColumn(
+                    "Buy date", min_value=pd.Timestamp(config.START_DATE).date()),
+            },
+            key=f"live_editor::{seed_key}",
+        )
+        cash = st.number_input("Cash (€)", min_value=0.0, value=float(seed_cash),
+                               step=1000.0, key=f"live_cash::{seed_key}")
+        if st.button(f"💾 Save / update '{name}'") and name:
+            portfolio_store.save_portfolio(name, _editor_to_positions(edited), cash)
+            st.success(f"Saved portfolio '{name}'.")
 
     state = build_dated_book(_editor_to_positions(edited), market, cash)
     invested = sum(l.cost_basis for l in state.lots) + state.cash
