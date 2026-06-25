@@ -19,7 +19,8 @@ from .backtest.engine import (
 )
 from .backtest.walkforward import WalkForwardResult, walk_forward_validate
 from .data import fetch, store, tickers
-from .features import analyst, cross_asset, technical
+from .features import analyst, cross_asset, regime, technical
+from .features.regime import Regime
 from .ml import dataset, forecast, model, overlay
 from .ml.forecast import Forecast
 
@@ -35,6 +36,7 @@ class Phase1Result:
     sentiment: pd.DataFrame  # live analyst/sentiment rows (empty if disabled)
     nasdaq: pd.Series  # raw NASDAQ close (for the Strategy tab)
     panel: pd.DataFrame  # (date, ticker) feature panel (reused by the Live tab)
+    regime: Regime | None = None  # rising-market badge (None if ^GSPC/^VIX absent)
 
 
 def fetch_and_store(
@@ -214,10 +216,16 @@ def run_phase1(
     forecasts = forecast.apply_book_limits(forecasts, *_book_cash_held(bt.final_state))
 
     corr = _correlation_matrix({t: df["close"] for t, df in raw.items()})
+    reg = (regime.detect_regime(
+               raw["^GSPC"]["close"], raw["^VIX"]["close"],
+               {t: df["close"] for t, df in market.items()},
+               gold=raw["GC=F"]["close"] if "GC=F" in raw else None,
+               oil=raw["CL=F"]["close"] if "CL=F" in raw else None)
+           if "^GSPC" in raw and "^VIX" in raw else None)
     return Phase1Result(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,
-        sentiment=sentiment_df, nasdaq=nasdaq, panel=panel,
+        sentiment=sentiment_df, nasdaq=nasdaq, panel=panel, regime=reg,
     )
 
 

@@ -82,6 +82,18 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   model features.
 - **`options.py`** — `put_call_ratio()` and `iv_skew()` feature-facing wrappers over
   the fetches.
+- **`regime.py`** — `detect_regime()` classifies the current market (Rising / Neutral /
+  Falling) from six explainable Fear&Greed-style votes: S&P 500 vs its 50-day MA,
+  S&P 500 vs its 125-day MA, breadth (portfolio stocks above their 125-day MA), VIX vs
+  its 50-day MA, gold (`GC=F`) vs its 50-day MA, and oil (`CL=F`) vs its 50-day MA. For
+  VIX/gold/oil, *below* the MA is bullish (a rising gold/oil = safe-haven/inflation
+  risk-off). Bullish-vote fraction > 0.6 = Rising, < 0.4 = Falling, else Neutral; returns
+  a `Regime` (label + bullish-vote fraction + per-component `RegimeSignal`s, each with a
+  human-readable `detail` and a short chart `label` — breadth's is "N > 125d MA", not a
+  bare fraction). `gold`/`oil` are optional (omitted → the four core votes); the dense
+  raw commodity closes are used (the cross-asset gold/oil *ratio* has interspersed NaNs
+  that break its MA). Pure pandas; insufficient history votes non-bullish. Computed in
+  `run_phase1` and surfaced as the **ML: Current market** gauge + vote bars.
 
 ### `ml/`
 - **`dataset.py`** — `FEATURE_COLS` is the model contract (technical + cross-asset +
@@ -214,7 +226,11 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   analyst/sentiment summary. Reuses the trained model from `_load` (no retrain). The other
   three are the ML views (prefixed **ML:**): **ML: Current market** (the *actual*
   end-of-backtest book from `BacktestResult.final_state` — real per-tier values and live
-  cash level, not the static template; Plotly donut; cross-asset correlation with three
+  cash level, not the static template; Plotly donut; a **rising-market regime panel**
+  (`_render_regime` over `Phase1Result.regime` — a Plotly **vote gauge** (verdict-coloured
+  title over a red→white→green gradient arc, the bullish-vote count marked by a dark
+  threshold line) + a diverging **vote bar** per
+  component, reason on hover); cross-asset correlation with three
   views — 5 stocks vs NASDAQ / all assets / one stock vs all as a point chart — and a
   ticker→name legend popover; a simplified analyst/sentiment summary — rating, news tone,
   target upside), **ML: Forecast & Backtest** (5-field forecast sized to the live book,

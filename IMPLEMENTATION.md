@@ -38,7 +38,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
 | **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | ✅ done (marginal win accepted) |
 | **4** | Full rules engine (allocation/risk/leverage/drawdown/trim/crisis) + German tax + dividends, in backtest | ✅ done |
-| **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | 🔄 in progress (cron + sentiment snapshot done) |
+| **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | 🔄 in progress (cron + sentiment snapshot + regime badge done) |
 
 ## 4. Architecture (implemented)
 
@@ -344,7 +344,9 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   aggressive-strategy state (`sell_lot`, `tp_basis`, all-3x base case) + helpers
   (stop-loss exit, take-profit skim/re-base/underlying seed, fixed-chunk entries,
   per-name 33% cap + capped-name entry skip) + `run_aggressive_backtest` (3x/stock-only
-  book, end-of-window cap holds) + 3x-only forecast restriction.
+  book, end-of-window cap holds) + 3x-only forecast restriction, regime classifier
+  (`detect_regime` — Rising/Neutral/Falling votes, per-signal explainability, short-history
+  robustness).
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
@@ -375,8 +377,19 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   scheduling; the dated snapshots accumulate the analyst-signal history needed to make
   the overlay trainable. **Live: Sample Portfolio tab** — users get strategy-based,
   news/sentiment-aware action recommendations for their own book
-  (`pipeline.recommend_for_portfolio`; §5d). **Remaining:** correlation/**regime
-  detection** UI (rising-market detection), Docker deploy.
+  (`pipeline.recommend_for_portfolio`; §5d). **Rising-market regime badge** —
+  `features.regime.detect_regime` casts six explainable Fear&Greed-style votes
+  (S&P vs 50d MA · S&P vs 125d MA · breadth: stocks above their 125d MA · VIX vs 50d MA ·
+  gold vs 50d MA · oil vs 50d MA — for VIX/gold/oil, *below* their MA = bullish, i.e. a
+  rising gold/oil is risk-off); bullish fraction > 0.6 = Rising, < 0.4 = Falling, else
+  Neutral. Computed in `run_phase1` (`Phase1Result.regime`, from `^GSPC`/`^VIX` + the
+  5 stocks + `GC=F`/`CL=F` closes — the dense raw closes, not the NaN-pocked cross-asset
+  ratio) and shown atop the **ML: Current market** tab as a **Plotly vote gauge**
+  (a verdict-coloured title over a red→white→green gradient arc, the bullish-vote count
+  marked by a dark threshold line) + a **diverging
+  vote bar** per component (green = bullish, short metric on the bar — breadth as
+  "N > 125d MA" — full reason on hover). Pure/offline.
+  **Remaining:** Docker deploy.
 
 ## 8. Conventions
 

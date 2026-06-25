@@ -96,6 +96,7 @@ def _load(n_dataset: int, with_sentiment: bool, strategy: str):
         "importance": res.model.feature_importance,
         "mean_cv": res.model.mean_cv,
         "correlation": res.correlation,
+        "regime": getattr(res, "regime", None),  # rising-market badge
         "sentiment": res.sentiment,
         "market": res.market,
         "nasdaq": res.nasdaq,
@@ -157,7 +158,10 @@ def _render_about(st) -> None:
 def main() -> None:
     st.set_page_config(page_title="ConcentratedInvestment", page_icon="📈", layout="wide")
     title_col, about_col, help_col = st.columns([4, 1, 1])
-    title_col.title("ConcentratedInvestment")
+    title_col.markdown(
+        "<h1 style='color:#234637;margin-bottom:0'>ConcentratedInvestment</h1>",
+        unsafe_allow_html=True,
+    )
     with about_col:
         _render_about(st)
     with help_col:
@@ -436,8 +440,82 @@ def _render_current(data: dict) -> None:
             "to ~0% on a crisis buy-the-dip), not the static template."
         )
 
+    _render_regime(data.get("regime"))
     _render_correlation(data["correlation"])
     _render_sentiment(data.get("sentiment"), data.get("market", {}))
+
+
+_REGIME_COLOR = {"Rising": "#234637", "Neutral": "#9e9e9e", "Falling": "#c62828"}
+_GAUGE_RED, _GAUGE_WHITE, _GAUGE_GREEN = (198, 40, 40), (255, 255, 255), (35, 70, 55)
+
+
+def _red_white_green(t: float) -> str:
+    """Interpolate dark-red -> white -> dark-green for ``t`` in [0, 1]."""
+    a, b, s = ((_GAUGE_RED, _GAUGE_WHITE, t * 2) if t < 0.5
+               else (_GAUGE_WHITE, _GAUGE_GREEN, (t - 0.5) * 2))
+    rgb = tuple(round(a[j] + (b[j] - a[j]) * s) for j in range(3))
+    return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
+
+
+def _regime_gauge(reg):
+    """Bullish-vote gauge over a red->white->green gradient (vote count, no %)."""
+    import plotly.graph_objects as go
+
+    n = len(reg.signals)
+    votes = round(reg.score * n)
+    color = _REGIME_COLOR[reg.label]
+    k = 24
+    steps = [{"range": [i * n / k, (i + 1) * n / k],
+              "color": _red_white_green((i + 0.5) / k)} for i in range(k)]
+    fig = go.Figure(go.Indicator(
+        mode="gauge",
+        value=votes,
+        title={"text": f"{reg.label} market", "font": {"size": 18, "color": color}},
+        gauge={
+            "axis": {"range": [0, n], "tickvals": list(range(n + 1)), "tickwidth": 1},
+            "bar": {"color": "rgba(0,0,0,0)"},
+            "steps": steps,
+            "threshold": {"line": {"color": "#222", "width": 4},
+                          "thickness": 0.85, "value": votes},
+        },
+    ))
+    fig.update_layout(height=230, margin=dict(l=20, r=20, t=60, b=10))
+    return fig
+
+
+def _regime_signals_chart(reg):
+    """Per-component votes as a diverging bar (green = bullish), detail on hover."""
+    import plotly.graph_objects as go
+
+    names = [s.name for s in reg.signals]
+    votes = [1 if s.bullish else -1 for s in reg.signals]
+    colors = ["#234637" if s.bullish else "#c62828" for s in reg.signals]
+    fig = go.Figure(go.Bar(
+        x=votes, y=names, orientation="h", width=0.6,
+        marker_color=colors, text=[s.label for s in reg.signals],
+        textposition="outside", textfont_size=11, cliponaxis=False,
+        customdata=[s.detail for s in reg.signals],
+        hovertemplate="%{customdata}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=max(230, 44 * len(reg.signals)),
+        margin=dict(l=10, r=70, t=40, b=10), bargap=0.4,
+        title={"text": "Component votes (green = bullish)", "font": {"size": 14}},
+        xaxis=dict(range=[-1.9, 1.9], showticklabels=False, zeroline=True,
+                   zerolinecolor="#aaa"),
+        yaxis=dict(autorange="reversed"), showlegend=False,
+    )
+    return fig
+
+
+def _render_regime(reg) -> None:
+    """Rising-market badge: a Plotly gauge + the three component votes (why)."""
+    if reg is None:
+        return
+    st.subheader("Market regime")
+    col_gauge, col_bars = st.columns([1, 2])
+    col_gauge.plotly_chart(_regime_gauge(reg), width="stretch")
+    col_bars.plotly_chart(_regime_signals_chart(reg), width="stretch")
 
 
 def _render_correlation(corr: pd.DataFrame) -> None:
