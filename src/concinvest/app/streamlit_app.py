@@ -619,7 +619,7 @@ def _render_sentiment(sent, market: dict) -> None:
                              "ticksuffix": "%", "zeroline": False},
                       yaxis={"automargin": True},
                       margin={"l": 0, "r": 10, "t": 10, "b": 0})
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width="stretch", key="sentiment_upside")
     st.caption("Bar length = upside to mean analyst price target · colour = consensus "
                "rating (red Sell → green Buy) · ▲/■/▼ = news-headline tone. Live "
                "signals (display only; no history to train on yet).")
