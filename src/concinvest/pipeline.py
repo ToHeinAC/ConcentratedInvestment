@@ -244,19 +244,12 @@ def _lot_value_path(closes: pd.Series, tier: int, invested: float, entry) -> pd.
     return (invested * (1.0 + tier * perf)).clip(lower=0.0)
 
 
-def build_dated_book(positions, market: dict[str, pd.DataFrame], cash: float):
-    """Build a ``PortfolioState`` from **per-position dated invested amounts**.
-
-    ``positions`` is a DataFrame or iterable of mappings with ``ticker, tier,
-    invested_eur, buy_date`` — the EUR invested in one ``(stock, tier)`` on **its own buy
-    date** (each tier's date is evaluated separately). A lot's **cost basis** is the
-    invested amount (the real tax basis), its **current value** is ``invested * (1 + tier *
-    underlying-%-return-since-buy-date)`` (simple leverage, `_lot_value_path`), and its
-    take-profit reference starts at cost. The book's **high-water** is the peak of the
-    combined daily value (cash + lots, 0 before each lot's buy date, held flat across
-    gaps), so the drawdown guardrail is meaningful. Pure (no network) — derives everything
-    from the already-fetched prices."""
-    from .portfolio.state import Lot, PortfolioState
+def _dated_lots_and_paths(positions, market: dict[str, pd.DataFrame]):
+    """``(lots, value-paths)`` for the funded, in-universe positions — shared by
+    `build_dated_book` and `dated_book_value_path`. Each lot's cost basis is the invested
+    amount; its value path is `_lot_value_path` (empty when the buy date is past the last
+    close, in which case the lot's current value falls back to its cost)."""
+    from .portfolio.state import Lot
 
     if isinstance(positions, pd.DataFrame):
         positions = positions.to_dict("records")
@@ -275,22 +268,56 @@ def build_dated_book(positions, market: dict[str, pd.DataFrame], cash: float):
         lots.append(Lot(ticker, tier, invested, current, tp_basis=invested))
         if not path.empty:
             paths.append(path)
+    return lots, paths
 
+
+def _combine_paths(paths: list[pd.Series], cash: float) -> pd.Series:
+    """Daily combined book value (cash + each lot; ffill holds across gaps, leading
+    pre-entry NaN -> 0). Empty when no lot has an in-history path."""
+    if not paths:
+        return pd.Series(dtype=float)
+    idx = paths[0].index
+    for p in paths[1:]:
+        idx = idx.union(p.index)
+    total = pd.Series(float(cash), index=idx)
+    for p in paths:
+        total = total.add(p.reindex(idx).ffill().fillna(0.0), fill_value=0.0)
+    return total
+
+
+def build_dated_book(positions, market: dict[str, pd.DataFrame], cash: float):
+    """Build a ``PortfolioState`` from **per-position dated invested amounts**.
+
+    ``positions`` is a DataFrame or iterable of mappings with ``ticker, tier,
+    invested_eur, buy_date`` — the EUR invested in one ``(stock, tier)`` on **its own buy
+    date** (each tier's date is evaluated separately). A lot's **cost basis** is the
+    invested amount (the real tax basis), its **current value** is ``invested * (1 + tier *
+    underlying-%-return-since-buy-date)`` (simple leverage, `_lot_value_path`), and its
+    take-profit reference starts at cost. The book's **high-water** is the peak of the
+    combined daily value (cash + lots, 0 before each lot's buy date, held flat across
+    gaps), so the drawdown guardrail is meaningful. Pure (no network) — derives everything
+    from the already-fetched prices."""
+    from .portfolio.state import PortfolioState
+
+    lots, paths = _dated_lots_and_paths(positions, market)
     state = PortfolioState(cash=float(cash), lots=lots)
     # High-water always includes "now" (the current book value): lots whose buy date is
     # beyond their ticker's last close have an empty path and aren't in `total`, so the
     # historical max alone could sit below current and yield a spurious negative drawdown.
+    total = _combine_paths(paths, cash)
     peak = state.total_value()
-    if paths:
-        idx = paths[0].index
-        for p in paths[1:]:
-            idx = idx.union(p.index)
-        total = pd.Series(float(cash), index=idx)
-        for p in paths:  # ffill holds across gaps; leading pre-entry NaN -> 0 (not held)
-            total = total.add(p.reindex(idx).ffill().fillna(0.0), fill_value=0.0)
+    if not total.empty:
         peak = max(peak, float(total.max()))
     state.high_water = peak
     return state
+
+
+def dated_book_value_path(positions, market: dict[str, pd.DataFrame], cash: float) -> pd.Series:
+    """Daily combined €-value of a dated user book since its earliest buy date — the same
+    series whose peak sets `build_dated_book`'s high-water. Empty when no position has an
+    in-history path. Pure (no network) — for the Live tab's performance-vs-NASDAQ chart."""
+    _, paths = _dated_lots_and_paths(positions, market)
+    return _combine_paths(paths, cash)
 
 
 def _strategy_actions(state, trained, panel, strategy):

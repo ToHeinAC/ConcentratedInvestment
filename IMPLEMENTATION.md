@@ -281,7 +281,10 @@ unless changed.
   leverage, no daily compounding; floored at €0, `_lot_value_path`), keeps the real **cost
   basis**, and computes the book's **high-water** (peak of the marked book path, **always ≥
   current** so drawdown can't go negative — incl. lots bought past their last close) — shown
-  as invested / current / drawdown metrics + a **Plotly pie** of current value per position.
+  as invested / current / drawdown metrics + a **Plotly pie** of current value per position
+  next to a **performance-since-inception vs NASDAQ** line chart (`dated_book_value_path`
+  gives the daily combined book €-value; both rebased to 0 at the earliest buy date —
+  portfolio in the app's dark green, NASDAQ dark red, the convention for all NASDAQ plots).
   A **Run live
   analysis** button calls `pipeline.recommend_for_portfolio`, which (reusing the already-
   trained model) fetches live news/sentiment, sizes the 5-field forecast to that book

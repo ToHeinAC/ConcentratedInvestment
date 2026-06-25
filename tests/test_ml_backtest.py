@@ -384,6 +384,26 @@ def test_build_dated_book_per_tier_dates(synth_market):
     assert st.high_water >= st.total_value() - 1e-6  # peak of the marked book path
 
 
+def test_dated_book_value_path(synth_market):
+    # The Live tab's performance chart: combined €-value path = cash + each lot's
+    # simple-leverage value, starting at the earliest buy date. Its first point equals
+    # cash + invested (no drift yet) and its last equals the marked book value.
+    from concinvest import pipeline
+
+    t = next(iter(synth_market))
+    closes = pd.Series(synth_market[t]["close"].values,
+                       index=pd.to_datetime(list(synth_market[t].index))).sort_index()
+    buy = closes.index[len(closes) // 3]
+    positions = [{"ticker": t, "tier": 2, "invested_eur": 1000.0, "buy_date": buy}]
+    path = pipeline.dated_book_value_path(positions, synth_market, cash=500.0)
+
+    assert not path.empty
+    assert path.index[0] == buy
+    assert abs(path.iloc[0] - 1500.0) < 1e-6  # cash + invested at the buy date
+    st = pipeline.build_dated_book(positions, synth_market, cash=500.0)
+    assert abs(path.iloc[-1] - st.total_value()) < 1e-6  # last point = marked book value
+
+
 def test_build_dated_book_high_water_never_below_current(synth_market):
     # Regression: a lot bought *after* the last close has an empty price path; it must
     # still count toward the high-water, else drawdown goes spuriously negative.

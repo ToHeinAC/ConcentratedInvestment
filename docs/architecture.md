@@ -218,7 +218,12 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   the underlying move scaled by leverage, no daily compounding; floored at €0), keeps the
   real **cost basis**, and computes the book's **high-water** (always ≥ current, so the
   drawdown can't go negative), shown as invested / current / drawdown metrics + a **Plotly
-  pie** of current value per position (invested € and P&L on hover). A **Run live
+  pie** of current value per position (invested € and P&L on hover) **next to** a
+  **performance-since-inception vs NASDAQ** line chart (`pipeline.dated_book_value_path`
+  → daily combined book €-value; both lines rebased to 0 at the earliest buy date,
+  portfolio dark green / NASDAQ dark red — the `_PORTFOLIO_COLOR`/`_NASDAQ_COLOR`
+  convention applied to every NASDAQ plot: this chart, the backtest curve, the Strategy
+  tab, the Cash view). A **Run live
   analysis** button fetches live news/sentiment and calls `pipeline.recommend_for_portfolio`,
   surfacing the strategy's **actions** (default: drawdown de-risk / dominance / 33% trim;
   aggressive: −60% stop-loss / +60% take-profit / cap — both need the derived cost basis)
@@ -258,6 +263,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   a `PortfolioState` (current value = `invested × (1 + tier × underlying-%-return)` since
   the buy date — simple leverage, `_lot_value_path`; real cost basis, derived high-water
   that always includes "now", so drawdown ≥ 0 even for lots bought past the last close);
+  `dated_book_value_path(positions, market, cash)` — pure: the daily combined book €-value
+  (cash + each lot's simple-leverage path, the same series whose peak sets the high-water),
+  for the Live tab's performance-vs-NASDAQ chart (`build_dated_book` and it share the
+  `_dated_lots_and_paths` / `_combine_paths` helpers);
   `recommend_for_portfolio(state, model, panel, market, strategy, …)` — side-effect-free
   live recommendations for a **user-supplied** book (reuses a trained model): live
   sentiment → forecast sized to the book (`apply_book_limits`) + overlay + the strategy's

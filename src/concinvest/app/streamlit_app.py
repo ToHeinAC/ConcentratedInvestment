@@ -23,6 +23,11 @@ from concinvest.ml.forecast import forecasts_to_frame
 
 _TIER_LABEL = {1: "stock", 2: "2x", 3: "3x"}
 
+# Colour convention for portfolio-vs-NASDAQ plots: portfolio in the app's dark green
+# (matching the title), NASDAQ in dark red.
+_PORTFOLIO_COLOR = "#234637"
+_NASDAQ_COLOR = "#8b0000"
+
 
 def _state_to_frame(state) -> pd.DataFrame:
     """Actual end-of-backtest book -> positions DataFrame (per-tier value + weight).
@@ -281,6 +286,27 @@ def _book_pie(state):
     return fig
 
 
+def _book_performance_fig(book_path: pd.Series, nasdaq):
+    """Portfolio %-performance since inception vs NASDAQ, both rebased to 0 at the book's
+    earliest buy date (portfolio dark green, NASDAQ dark red)."""
+    import plotly.graph_objects as go
+
+    port = (book_path / book_path.iloc[0] - 1.0) * 100.0
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=port.index, y=port.values, mode="lines",
+                             name="Portfolio", line={"color": _PORTFOLIO_COLOR}))
+    nq = _series(nasdaq).loc[book_path.index[0]:book_path.index[-1]]
+    if not nq.empty:
+        nq_pct = (nq / nq.iloc[0] - 1.0) * 100.0
+        fig.add_trace(go.Scatter(x=nq_pct.index, y=nq_pct.values, mode="lines",
+                                 name=f"NASDAQ ({config.BENCHMARK_TICKER})",
+                                 line={"color": _NASDAQ_COLOR}))
+    fig.update_layout(height=380, margin={"l": 0, "r": 0, "t": 10, "b": 0},
+                      yaxis_title="cumulative return (%)",
+                      legend={"orientation": "h", "y": 1.1})
+    return fig
+
+
 def _guard_to_frame(trades) -> pd.DataFrame:
     """Guardrail Trade list -> display frame (name + tier + €), newest rule first."""
     cols = ["Stock", "Name", "action", "position", "amount_eur"]
@@ -300,7 +326,7 @@ _NEW_PORTFOLIO = "➕ New portfolio…"
 def _render_live(data: dict) -> None:
     """First tab: a persisted, selectable user portfolio (per-position buy dates) with a
     live (news + sentiment) analysis and strategy-based action recommendations."""
-    from concinvest.pipeline import build_dated_book
+    from concinvest.pipeline import build_dated_book, dated_book_value_path
 
     market = data.get("market", {})
     strat = "Aggressive (3x)" if data.get("strategy") == "aggressive" else "Default (balanced)"
@@ -340,7 +366,8 @@ def _render_live(data: dict) -> None:
             portfolio_store.save_portfolio(name, _editor_to_positions(edited), cash)
             st.success(f"Saved portfolio '{name}'.")
 
-    state = build_dated_book(_editor_to_positions(edited), market, cash)
+    positions = _editor_to_positions(edited)
+    state = build_dated_book(positions, market, cash)
     invested = sum(l.cost_basis for l in state.lots) + state.cash
     current = state.total_value()
     drawdown = (state.high_water - current) / state.high_water if state.high_water else 0.0
@@ -355,11 +382,23 @@ def _render_live(data: dict) -> None:
               help="How far the book's current value sits below its highest value reached "
                    "since the earliest buy date (peak − current) / peak. 0% means you're at "
                    "a new high. The default strategy starts de-risking past 20%.")
-    st.markdown("**Current value by position**")
     if state.lots or state.cash > 0:
-        st.plotly_chart(_book_pie(state), width="stretch")
-        st.caption("Current value = invested × (1 + leverage × underlying % return since "
-                   "the buy date). Hover a slice for its invested € and P&L.")
+        col_pie, col_perf = st.columns(2)
+        with col_pie:
+            st.markdown("**Current value by position**")
+            st.plotly_chart(_book_pie(state), width="stretch")
+            st.caption("Current value = invested × (1 + leverage × underlying % return "
+                       "since the buy date). Hover a slice for its invested € and P&L.")
+        with col_perf:
+            st.markdown("**Performance since inception vs NASDAQ**")
+            book_path = dated_book_value_path(positions, market, cash)
+            if book_path.empty:
+                st.info("No price history yet for these buy dates.")
+            else:
+                st.plotly_chart(_book_performance_fig(book_path, data["nasdaq"]),
+                                width="stretch")
+                st.caption("Cumulative % return since the earliest buy date, vs NASDAQ "
+                           "(both rebased to 0).")
     else:
         st.info("Add positions above to see the portfolio breakdown.")
 
@@ -645,7 +684,9 @@ def _render_forecast(data: dict) -> None:
     )
     curve = data["curve"]
     pct = (curve / curve.iloc[0] - 1.0) * 100.0  # cumulative % return, both rebased to 0
-    st.line_chart(pct, y_label="cumulative return (%)")
+    # curve columns are ["portfolio", "benchmark"] -> green / dark red, the NASDAQ convention.
+    st.line_chart(pct, y_label="cumulative return (%)",
+                  color=[_PORTFOLIO_COLOR, _NASDAQ_COLOR])
     st.caption(f"Model CV ROC-AUC (mean): {data['mean_cv']:.3f}")
 
     st.subheader("Feature importance")
@@ -744,10 +785,10 @@ def _render_cash(data: dict) -> None:
         subplot_titles=("Cash (€)", f"NASDAQ ({config.BENCHMARK_TICKER})"),
     )
     fig.add_trace(go.Scatter(x=cash.index, y=cash.values, mode="lines",
-                             name="cash", line={"color": "#2ca02c"}), row=1, col=1)
+                             name="cash", line={"color": _PORTFOLIO_COLOR}), row=1, col=1)
     fig.add_trace(go.Scatter(x=nq.index, y=nq.values, mode="lines",
                              name=f"NASDAQ ({config.BENCHMARK_TICKER})",
-                             line={"color": "#888"}), row=2, col=1)
+                             line={"color": _NASDAQ_COLOR}), row=2, col=1)
     fig.update_xaxes(range=[start, end])
     fig.update_yaxes(title_text="€", row=1, col=1)
     fig.update_layout(height=620, margin={"l": 0, "r": 0, "t": 50, "b": 0},
@@ -823,7 +864,7 @@ def _render_strategy(data: dict) -> None:
     nq = _series(data["nasdaq"]).loc[start:end]
     fig.add_trace(go.Scatter(x=nq.index, y=nq.values, mode="lines",
                              name=f"NASDAQ ({config.BENCHMARK_TICKER})",
-                             line={"color": "#888"}), row=3, col=1)
+                             line={"color": _NASDAQ_COLOR}), row=3, col=1)
 
     fig.update_xaxes(range=[start, end])  # identical x-axis across all three panels
     fig.update_yaxes(title_text="€", row=2, col=1)
