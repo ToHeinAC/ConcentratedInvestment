@@ -403,7 +403,7 @@ def _render_live(data: dict) -> None:
                      width="stretch", hide_index=True)
         st.caption("Best above-threshold action per stock, sized to your book (buys capped "
                    "at cash, sells at the position held) and tilted by live news/sentiment.")
-    _render_sentiment(reco["sentiment"], data.get("market", {}))
+    _render_sentiment(reco["sentiment"], data.get("market", {}), key="sentiment_upside_live")
 
 
 def _render_current(data: dict) -> None:
@@ -589,7 +589,7 @@ def _sentiment_rows(sent, market: dict) -> list[dict]:
     return rows
 
 
-def _render_sentiment(sent, market: dict) -> None:
+def _render_sentiment(sent, market: dict, key: str = "sentiment_upside") -> None:
     """Compelling per-stock analyst/sentiment visual: rating-coloured upside bars."""
     if sent is None or sent.empty:
         return
@@ -619,7 +619,7 @@ def _render_sentiment(sent, market: dict) -> None:
                              "ticksuffix": "%", "zeroline": False},
                       yaxis={"automargin": True},
                       margin={"l": 0, "r": 10, "t": 10, "b": 0})
-    st.plotly_chart(fig, width="stretch", key="sentiment_upside")
+    st.plotly_chart(fig, width="stretch", key=key)
     st.caption("Bar length = upside to mean analyst price target · colour = consensus "
                "rating (red Sell → green Buy) · ▲/■/▼ = news-headline tone. Live "
                "signals (display only; no history to train on yet).")
