@@ -569,26 +569,60 @@ def _news_label(score) -> str:
     return "Positive" if score > 0.5 else "Negative" if score < -0.5 else "Neutral"
 
 
-def _render_sentiment(sent, market: dict) -> None:
-    """Simplified, human-readable analyst/sentiment summary per stock."""
-    if sent is None or sent.empty:
-        return
+_RATING_COLORS = {"Strong Buy": "#1a7a3a", "Buy": "#4caf50", "Hold": "#f0ad4e",
+                  "Sell": "#e8743b", "Strong Sell": "#c0392b", "—": "#9e9e9e"}
+_NEWS_ICONS = {"Positive": " ▲", "Neutral": " ■", "Negative": " ▼", "—": ""}
+
+
+def _sentiment_rows(sent, market: dict) -> list[dict]:
+    """Per-stock rating / news tone / target-upside signals (pure)."""
     rows = []
     for _, r in sent.iterrows():
         t = r["ticker"]
         price = float(market[t]["close"].iloc[-1]) if t in market else None
         target = r.get("analyst_target_mean")
         upside = (target / price - 1.0) if (target and price) else None
-        rows.append({"Stock": tickers.NAMES.get(t, t),
-                     "Analyst rating": _rating(r.get("recommendation_mean")),
-                     "News": _news_label(r.get("news_sentiment_score")),
-                     "Target upside": upside})
-    df = pd.DataFrame(rows)
+        rows.append({"ticker": t, "name": tickers.NAMES.get(t, t),
+                     "rating": _rating(r.get("recommendation_mean")),
+                     "news": _news_label(r.get("news_sentiment_score")),
+                     "upside": upside})
+    return rows
+
+
+def _render_sentiment(sent, market: dict) -> None:
+    """Compelling per-stock analyst/sentiment visual: rating-coloured upside bars."""
+    if sent is None or sent.empty:
+        return
+    import plotly.graph_objects as go
+
+    rows = _sentiment_rows(sent, market)[::-1]   # first stock at the top of the chart
+    pct = [(r["upside"] * 100 if r["upside"] is not None else 0.0) for r in rows]
+    labels = [f"{r['rating']} · {p:+.0f}%{_NEWS_ICONS[r['news']]}"
+              if r["upside"] is not None else f"{r['rating']} · —"
+              for r, p in zip(rows, pct)]
+    hover = [f"<b>{r['name']}</b><br>Analyst rating: {r['rating']}"
+             f"<br>News tone: {r['news']}<br>Target upside: "
+             f"{p:+.0f}%" for r, p in zip(rows, pct)]
+    lo, hi = min(pct + [0.0]), max(pct + [0.0])
+    span = (hi - lo) or 1.0
+
     st.subheader("Analyst & sentiment (live)")
-    st.dataframe(df.style.format({"Target upside": "{:+.0%}"}, na_rep="—"),
-                 width="stretch", hide_index=True)
-    st.caption("Analyst consensus rating · news-headline tone · upside to mean price "
-               "target. Live signals (display only; no history to train on yet).")
+    fig = go.Figure(go.Bar(
+        x=pct, y=[r["name"] for r in rows], orientation="h",
+        marker={"color": [_RATING_COLORS[r["rating"]] for r in rows]},
+        text=labels, textposition="outside", cliponaxis=False,
+        hovertext=hover, hoverinfo="text"))
+    fig.add_vline(x=0, line_width=1, line_color="#bbb")
+    fig.update_layout(height=70 + 56 * len(rows), bargap=0.45,
+                      xaxis_title="Upside to mean analyst price target",
+                      xaxis={"range": [lo - span * 0.08, hi + span * 0.95],
+                             "ticksuffix": "%", "zeroline": False},
+                      yaxis={"automargin": True},
+                      margin={"l": 0, "r": 10, "t": 10, "b": 0})
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Bar length = upside to mean analyst price target · colour = consensus "
+               "rating (red Sell → green Buy) · ▲/■/▼ = news-headline tone. Live "
+               "signals (display only; no history to train on yet).")
 
 
 def _render_forecast(data: dict) -> None:
