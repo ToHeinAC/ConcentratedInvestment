@@ -1,5 +1,10 @@
 [server]
 headless = true
+# Behind Railway's reverse proxy the WebSocket was dropping and Streamlit kept
+# rebuilding the session (UI resetting). These let the WS survive the proxy.
+enableWebsocketCompression = false
+enableCORS = false
+enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
