@@ -421,7 +421,13 @@ def _render_live(data: dict) -> None:
         st.info("Set your holdings and press **Run live analysis** for recommendations.")
         return
 
-    st.subheader("Strategy actions")
+    st.subheader(
+        "Strategy actions",
+        help="Deterministic, rule-based sells from the selected strategy. "
+             "Default: 20% drawdown de-risk, 33% per-name trim, underlying-dominance. "
+             "Aggressive: −60% stop-loss, +60% take-profit skim, 33% cap. "
+             "Sell-side only — never a buy. Empty = your book is within risk limits.",
+    )
     if reco["guard"].empty:
         st.success("No mandatory action — your book is within the strategy's risk limits.")
     else:
@@ -433,7 +439,13 @@ def _render_live(data: dict) -> None:
                         "trim, underlying ≥ 2x+3x). Riskiest tier first; orders < €500 skipped.")
         st.caption(caption)
 
-    st.subheader("ML + news/sentiment signals")
+    st.subheader(
+        "ML + news/sentiment signals",
+        help="The ML 5-field forecast (ticker, buy/sell, €, tier, confidence), sized "
+             "to your book (buys capped at cash, sells at the position held) and tilted "
+             "by live news/sentiment. This is where an actual ML buy or sell trigger "
+             "appears. Empty = base case hold.",
+    )
     fc = reco["forecasts"]
     if fc.empty:
         st.success("Base case: **hold** — no trade triggered by current conditions.")
