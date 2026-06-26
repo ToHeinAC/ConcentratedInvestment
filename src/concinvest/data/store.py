@@ -82,6 +82,9 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Open a connection, creating the data dir and schema if needed."""
     config.ensure_dirs()
     conn = sqlite3.connect(str(db_path or config.DB_PATH))
+    # WAL lets the Streamlit app read while the daily cron writes, without locking
+    # (single-writer/many-reader). Idempotent — the mode is persisted on the db file.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
     _migrate(conn)
     return conn

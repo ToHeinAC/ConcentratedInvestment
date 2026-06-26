@@ -34,6 +34,15 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--strategy", choices=["default", "aggressive"], default="default",
                        help="portfolio book: default (90/10 guardrailed) or aggressive (all-3x)")
 
+    p_notify = sub.add_parser("notify", help="Email an alert if a saved portfolio has a trigger today")
+    p_notify.add_argument("--portfolio", required=True,
+                          help="saved portfolio name (data/portfolios/<name>.csv)")
+    p_notify.add_argument("--strategy", choices=["default", "aggressive"], default="default")
+    p_notify.add_argument("--start", default=str(config.START_DATE))
+    p_notify.add_argument("--n", type=int, default=4000, help="synthetic datapoints")
+    p_notify.add_argument("--no-tune", dest="tune", action="store_false",
+                          help="skip hyperparameter tuning (faster)")
+
     p_val = sub.add_parser("validate", help="Walk-forward (multi-window) validation vs NASDAQ")
     p_val.add_argument("--start", default=str(config.START_DATE))
     p_val.add_argument("--n", type=int, default=10000, help="synthetic datapoints")
@@ -86,6 +95,33 @@ def main(argv: list[str] | None = None) -> int:
         print("forecast:")
         fc = forecasts_to_frame(res.forecasts)
         print(fc.to_string(index=False) if not fc.empty else "  hold (no trade triggered)")
+        return 0
+
+    if args.command == "notify":
+        from . import notify
+        from .data.portfolio_store import load_portfolio
+        from .pipeline import build_dated_book, recommend_for_portfolio, run_phase1
+
+        # Train the model on fresh data (sentiment off here — the live overlay below
+        # fetches it), then score the user's saved book.
+        res = run_phase1(start=args.start, n_dataset=args.n, with_sentiment=False,
+                         tune=args.tune, strategy=args.strategy)
+        positions, cash = load_portfolio(args.portfolio)
+        state = build_dated_book(positions, res.market, cash)
+        fcs, _sent, actions = recommend_for_portfolio(
+            state, res.model, res.panel, res.market, strategy=args.strategy)
+        alert = notify.build_alert(fcs, actions, portfolio_name=args.portfolio,
+                                   strategy=args.strategy)
+        if alert is None:
+            print(f"no trigger for {args.portfolio}: book within strategy limits, ML says hold")
+            return 0
+        cfg = notify.email_config_from_env()
+        if cfg is None:
+            print("RESEND_API_KEY/ALERT_EMAIL_TO unset — printing alert instead of emailing:\n")
+            print(f"Subject: {alert.subject}\n\n{alert.body}")
+            return 0
+        notify.send_email(alert, **cfg)
+        print(f"emailed alert to {cfg['to']}: {alert.subject}")
         return 0
 
     if args.command == "validate":

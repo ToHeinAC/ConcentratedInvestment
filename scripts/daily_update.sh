@@ -19,4 +19,12 @@ exec >> data/daily_update.log 2>&1
 
 echo "=== $(date -Is) daily update start ==="
 uv run concinvest update --sentiment
+
+# Optional email-on-trigger: set ALERT_PORTFOLIO (and the Resend env vars, see
+# .env.example) to email yourself when that saved book has a buy/sell trigger today.
+# Unset -> skipped. Non-fatal so a notify failure never breaks the ETL.
+if [ -n "${ALERT_PORTFOLIO:-}" ]; then
+  echo "=== $(date -Is) notify: ${ALERT_PORTFOLIO} ==="
+  uv run concinvest notify --portfolio "${ALERT_PORTFOLIO}" || echo "notify failed (non-fatal)"
+fi
 echo "=== $(date -Is) daily update done ==="

@@ -312,11 +312,12 @@ unless changed.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 83 tests, offline (synthetic fixtures)
+uv run pytest                                   # 96 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest run --n 4000 --strategy aggressive   # the all-3x book (default: balanced)
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
+uv run concinvest notify --portfolio <name>     # email if that saved book has a trigger
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
 
@@ -324,6 +325,11 @@ Daily cron: `scripts/daily_update.sh` wraps `concinvest update --sentiment` (log
 the gitignored `data/daily_update.log`); schedule ~22:00 Europe/Berlin via `crontab -e`
 (`CRON_TZ=Europe/Berlin`). Each run appends a dated `sentiment_analyst` snapshot so the
 live analyst signals accumulate history (the prerequisite to making them trainable).
+If `ALERT_PORTFOLIO` is set the script also runs `concinvest notify` (non-fatal),
+which emails a buy/sell alert **only when something fires** (`notify.build_alert` +
+Resend API; config via env, see `.env.example`). **Deploy:** [`DEPLOY.md`](DEPLOY.md)
+(Railway — app + persistent SQLite volume + cron service; `railway.json`); SQLite runs
+in WAL mode so the app reads while the cron writes.
 
 - **Unit tests** (`tests/`, offline via `conftest.py` synthetic market): technical
   indicators vs known values, cross-asset ratios (incl. VVIX/GSCI/10y-5y spread),
@@ -349,7 +355,8 @@ live analyst signals accumulate history (the prerequisite to making them trainab
   per-name 33% cap + capped-name entry skip) + `run_aggressive_backtest` (3x/stock-only
   book, end-of-window cap holds) + 3x-only forecast restriction, regime classifier
   (`detect_regime` — Rising/Neutral/Falling votes, per-signal explainability, short-history
-  robustness).
+  robustness), and email-on-trigger alert building (`notify.build_alert` — no-trigger →
+  `None`, forecast/strategy-action → rendered subject + body).
 - **Live integration**: `concinvest run` prints model CV ROC-AUC, portfolio vs NASDAQ
   return, and the 5-field forecast for all stocks.
 - **UI**: app boots on 8505; **Run / refresh** fetches live data; safe-exit button
