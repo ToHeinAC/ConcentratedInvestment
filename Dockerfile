@@ -32,9 +32,12 @@ RUN mkdir -p /app/data
 
 EXPOSE 8505
 
-# Railway runs its own healthcheck; this also covers a plain `docker run`.
+# Railway runs its own healthcheck; this also covers a plain `docker run`. Uses the
+# runtime PORT (Railway-injected) with the local 8505 fallback.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8505/_stcore/health')"
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:%s/_stcore/health' % (os.environ.get('PORT') or '8505'))"
 
-CMD ["streamlit", "run", "src/concinvest/app/streamlit_app.py", \
-     "--server.port", "8505", "--server.address", "0.0.0.0"]
+# Shell form so ${PORT} expands at container runtime — Railway injects PORT; locally
+# it falls back to 8505. (A railway.json startCommand string does NOT reliably expand
+# $PORT, which is why the deployed app wasn't reachable — let the image CMD do it.)
+CMD streamlit run src/concinvest/app/streamlit_app.py --server.port ${PORT:-8505} --server.address 0.0.0.0
