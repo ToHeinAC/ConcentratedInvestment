@@ -9,6 +9,7 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NLTK_DATA=/app/nltk_data \
+    CONCINVEST_DATA_DIR=/app/data \
     STREAMLIT_SERVER_PORT=8505 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
@@ -25,9 +26,12 @@ RUN python -c "import nltk; nltk.download('vader_lexicon', download_dir='/app/nl
 # Streamlit theme + server config (headless, no usage stats), read at startup.
 COPY .streamlit ./.streamlit
 
-# Runtime data dir (SQLite db + portfolio CSVs). On Railway a persistent volume
-# mounts over this at /app/data; the mkdir keeps the app working without one. Local
-# data/ is never copied in — it is gitignored and excluded via .dockerignore.
+# Runtime data dir (SQLite db + portfolio CSVs). CONCINVEST_DATA_DIR (set above)
+# points the app + cron here regardless of where the package installs — without it
+# the __file__-relative default would land in site-packages, NOT under /app, so the
+# Railway volume mounted at /app/data would capture nothing. On Railway a persistent
+# volume mounts over this; the mkdir keeps the app working without one. Local data/
+# is never copied in — it is gitignored and excluded via .dockerignore.
 RUN mkdir -p /app/data
 
 EXPOSE 8505

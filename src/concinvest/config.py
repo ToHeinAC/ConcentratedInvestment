@@ -6,12 +6,18 @@ Keep this free of heavy imports so every module can import it cheaply.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 from pathlib import Path
 
 # --- Paths ---------------------------------------------------------------
 # Repo root = two levels up from this file (src/concinvest/config.py).
 ROOT_DIR: Path = Path(__file__).resolve().parents[2]
-DATA_DIR: Path = ROOT_DIR / "data"
+# Runtime data dir (SQLite db + portfolio CSVs). Defaults to the repo's data/,
+# but CONCINVEST_DATA_DIR overrides it so the deployed location is decoupled from
+# Python's import path: in the Docker image the package installs to site-packages,
+# so __file__-relative ROOT_DIR is NOT /app — set CONCINVEST_DATA_DIR=/app/data to
+# match the Railway volume mount (see DEPLOY.md).
+DATA_DIR: Path = Path(os.environ.get("CONCINVEST_DATA_DIR", ROOT_DIR / "data"))
 DB_PATH: Path = DATA_DIR / "concinvest.sqlite"
 
 # --- Time window (Story.md: start at 2020-01-01) -------------------------

@@ -27,6 +27,10 @@ transactional API. We use **Resend** (free tier 3k emails/mo):
 2. **Add a Volume** (service → *Variables/Settings → Volumes*): mount path **`/app/data`**.
    This is where the SQLite db + portfolio CSVs live; the volume makes them survive
    redeploys. (WAL mode is enabled in code so the app reads while the cron writes.)
+   The image sets `CONCINVEST_DATA_DIR=/app/data` so the app **and** the cron service
+   actually read/write there — without it the data path is derived from the package's
+   install location (site-packages, not `/app`), and the volume would capture nothing.
+   Attach the **same** volume to the cron service (§4) so both see one shared db.
 3. **Variables** tab — set (values from `.env.example`):
    `RESEND_API_KEY`, `ALERT_EMAIL_TO`, optional `ALERT_EMAIL_FROM`, and
    `ALERT_PORTFOLIO` (the saved portfolio name to watch).
