@@ -51,3 +51,63 @@ def test_daily_etl_without_sentiment_skips_snapshot(tmp_path, synth_raw, monkeyp
 
     summary = pipeline.daily_etl(with_sentiment=False, db_path=db)
     assert summary["sentiment_rows"] == 0
+
+
+def _capture_download(synth_raw, calls):
+    """Stub download_ohlcv that records the ``start`` it was asked for, and only
+    returns rows on/after that start (so the merge with stored history is exercised)."""
+    def _dl(universe, start=None, end=None, **k):
+        calls.append(pd.to_datetime(start).date())
+        cutoff = pd.to_datetime(start).date()
+        return {t: synth_raw[t][synth_raw[t].index >= cutoff]
+                for t in universe if t in synth_raw}
+    return _dl
+
+
+def test_fetch_and_store_incremental_tail(tmp_path, synth_raw, monkeypatch):
+    """Second run fetches only the tail (~last stored date − overlap), not from start."""
+    db = tmp_path / "inc.sqlite"
+    calls: list = []
+    monkeypatch.setattr(pipeline.fetch, "download_ohlcv",
+                        _capture_download(synth_raw, calls))
+    universe = list(synth_raw)
+
+    pipeline.fetch_and_store(universe, start=dt.date(2020, 1, 1), db_path=db)
+    market2, _cross, raw2 = pipeline.fetch_and_store(
+        universe, start=dt.date(2020, 1, 1), db_path=db)
+
+    # First call pulls full history from start; second only the recent tail.
+    assert calls[0] == dt.date(2020, 1, 1)
+    last_stored = max(synth_raw["TSLA"].index)
+    expected = last_stored - dt.timedelta(days=pipeline._REFETCH_OVERLAP_DAYS)
+    assert calls[1] == expected
+    # Despite the short second fetch, the merged history keeps full depth: long SMAs
+    # are populated and the full date range survives.
+    assert raw2["TSLA"].index[0] == min(synth_raw["TSLA"].index)
+    assert market2["TSLA"]["sma_200"].notna().any()
+
+
+def test_fetch_and_store_full_refetch(tmp_path, synth_raw, monkeypatch):
+    """full=True forces a fetch from start even when history is already stored."""
+    db = tmp_path / "full.sqlite"
+    calls: list = []
+    monkeypatch.setattr(pipeline.fetch, "download_ohlcv",
+                        _capture_download(synth_raw, calls))
+    universe = list(synth_raw)
+
+    pipeline.fetch_and_store(universe, start=dt.date(2020, 1, 1), db_path=db)
+    pipeline.fetch_and_store(universe, start=dt.date(2020, 1, 1), db_path=db, full=True)
+    assert calls[1] == dt.date(2020, 1, 1)
+
+
+def test_fetch_and_store_partial_db_full_fetch(tmp_path, synth_raw, monkeypatch):
+    """A db missing some universe tickers falls back to a full fetch (self-healing)."""
+    db = tmp_path / "partial.sqlite"
+    calls: list = []
+    monkeypatch.setattr(pipeline.fetch, "download_ohlcv",
+                        _capture_download(synth_raw, calls))
+
+    pipeline.fetch_and_store(["TSLA"], start=dt.date(2020, 1, 1), db_path=db)
+    # Now ask for the full universe; SIE.DE etc. are absent -> fetch from start again.
+    pipeline.fetch_and_store(list(synth_raw), start=dt.date(2020, 1, 1), db_path=db)
+    assert calls[1] == dt.date(2020, 1, 1)

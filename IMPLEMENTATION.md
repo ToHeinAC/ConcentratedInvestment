@@ -56,7 +56,12 @@ config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 
 **Data flow:** `fetch → features → store (SQLite) → ml.dataset panel → ml.model →
 {forecast, backtest} → app`. Orchestrated by `pipeline.run_phase1`;
-`pipeline.fetch_and_store` is the reusable daily-ETL block.
+`pipeline.fetch_and_store` is the reusable daily-ETL block. **Incremental fetch:**
+`fetch_and_store` pulls only bars newer than `store.latest_date` (minus a 7-day overlap
+for yfinance's retroactive bar/dividend revisions), then merges with full stored history
+read back via `store.read_ohlcv` so feature windows + training keep full depth. Empty/
+partial DB (or `--full`) → full fetch from `START_DATE` (self-healing). The model still
+trains on the full in-memory series; the win is network/latency, not training time.
 
 **Database:** 4 tables — `ohlcv_raw`, `daily_market` (Table 1), `sentiment_analyst`
 (Table 2), `cross_asset` (Table 3). Raw OHLCV kept separate from derived features.
@@ -312,11 +317,12 @@ unless changed.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 96 tests, offline (synthetic fixtures)
+uv run pytest                                   # 103 tests, offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest run --n 4000 --strategy aggressive   # the all-3x book (default: balanced)
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
 uv run concinvest update --sentiment            # daily ETL + dated sentiment snapshot (cron)
+uv run concinvest update --sentiment --full     # force full re-fetch (else incremental tail)
 uv run concinvest notify --portfolio <name>     # email if that saved book has a trigger
 uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
 ```
@@ -333,7 +339,9 @@ in WAL mode so the app reads while the cron writes.
 
 - **Unit tests** (`tests/`, offline via `conftest.py` synthetic market): technical
   indicators vs known values, cross-asset ratios (incl. VVIX/GSCI/10y-5y spread),
-  sentiment scaling, SQLite upsert/read roundtrip, additive schema migration, pure
+  sentiment scaling, SQLite upsert/read roundtrip, `latest_date`/`read_ohlcv` helpers +
+  incremental `fetch_and_store` (tail-only second fetch, `--full` force, partial-DB
+  self-heal, merged full-depth history), additive schema migration, pure
   fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
   train + 5-field forecast, backtest curve, portfolio state/tax/guardrails (incl.

@@ -83,12 +83,16 @@ def _trades_to_frame(trades) -> pd.DataFrame:
     )
 
 
-@st.cache_data(show_spinner="Fetching data, training model, running backtest…", ttl=3600)
-def _load(n_dataset: int, with_sentiment: bool, strategy: str):
+# show_spinner=False: progress is shown by an st.progress bar instead (driven by the
+# _progress callback). The callback is underscore-prefixed so st.cache_data does not
+# hash it (a cache hit returns instantly and never fires it — no bar flash).
+@st.cache_data(show_spinner=False, ttl=3600)
+def _load(n_dataset: int, with_sentiment: bool, strategy: str, _progress=None):
     # Import here so the module loads fast even if heavy deps lag.
     from concinvest.pipeline import run_phase1
 
-    res = run_phase1(n_dataset=n_dataset, with_sentiment=with_sentiment, strategy=strategy)
+    res = run_phase1(n_dataset=n_dataset, with_sentiment=with_sentiment,
+                     strategy=strategy, progress=_progress)
     return {
         "strategy": strategy,
         "model": res.model,      # reused by the Live tab to score a user-supplied book
@@ -196,7 +200,15 @@ def main() -> None:
         st.session_state["loaded"] = True
         _load.clear()
 
-    data = _load(n_dataset, with_sentiment, strategy)
+    # Progress bar through the main steps (only fires on a cache miss — i.e. after
+    # Run / refresh or a settings change; a cache hit returns instantly).
+    bar = st.empty()
+
+    def _progress(fraction: float, label: str) -> None:
+        bar.progress(min(int(fraction * 100), 100), text=label)
+
+    data = _load(n_dataset, with_sentiment, strategy, _progress=_progress)
+    bar.empty()
 
     tab_live, tab_current, tab_forecast, tab_strategy = st.tabs(
         ["Live: Sample Portfolio", "ML: Current market",

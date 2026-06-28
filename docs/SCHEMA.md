@@ -8,7 +8,10 @@ separate from derived features so features can be recomputed without re-download
 date columns are stored as ISO `YYYY-MM-DD` text.
 
 ## `ohlcv_raw`
-Raw daily price/volume, one row per `(date, ticker)`.
+Raw daily price/volume, one row per `(date, ticker)`. Also the **incremental-fetch
+cache**: `fetch_and_store` reads it back (`store.read_ohlcv`) and downloads only bars
+newer than `store.latest_date` (minus a 7-day overlap), merging the two before features
+recompute.
 
 | Column | Type | Notes |
 |--------|------|-------|

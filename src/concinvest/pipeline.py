@@ -39,26 +39,52 @@ class Phase1Result:
     regime: Regime | None = None  # rising-market badge (None if ^GSPC/^VIX absent)
 
 
+# Re-pull this many days of already-stored bars on an incremental fetch: yfinance
+# revises the most recent bars and dividends post adj_close retroactively.
+_REFETCH_OVERLAP_DAYS = 7
+
+
 def fetch_and_store(
     universe: list[str],
     start: _dt.date | str = config.START_DATE,
     end: _dt.date | str | None = None,
     db_path=None,
+    full: bool = False,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, dict[str, pd.DataFrame]]:
     """Download OHLCV, compute features, and persist all tables.
 
+    Incremental: only bars newer than what is already stored (minus a small overlap)
+    are fetched from the network, then merged with the full stored history so feature
+    windows (SMA-200 etc.) keep their depth and the model trains on the whole series.
+    An empty/partial database falls back to a full fetch from ``start`` (self-healing);
+    ``full=True`` forces that path (e.g. after a stock split rescales deep history).
+
     Returns ``(market_with_features, cross_asset_frame, raw)`` where ``market`` is
     restricted to the portfolio stocks (the ML/forecast targets) and ``raw`` is the
-    full per-ticker OHLCV download (reused for benchmark + correlation).
+    full per-ticker OHLCV history (reused for benchmark + correlation).
     """
-    raw = fetch.download_ohlcv(universe, start=start, end=end)
     conn = store.connect(db_path)
 
-    # Persist raw OHLCV.
-    for ticker, df in raw.items():
+    # Decide the fetch window: incremental tail when every ticker is already stored,
+    # else a full history pull from ``start``.
+    stored = {} if full else store.latest_date(conn)
+    if stored and all(t in stored for t in universe):
+        seam = min(pd.to_datetime(d) for d in stored.values())
+        fetch_start: _dt.date | str = (seam - pd.Timedelta(days=_REFETCH_OVERLAP_DAYS)).date()
+    else:
+        fetch_start = start
+
+    tail = fetch.download_ohlcv(universe, start=fetch_start, end=end)
+
+    # Persist the freshly-fetched bars (overlap rows refreshed idempotently).
+    for ticker, df in tail.items():
         out = df.reset_index()
         out.insert(1, "ticker", ticker)
         store.upsert(conn, "ohlcv_raw", out)
+
+    # Merge stored history + fresh tail: read the full series back so features and
+    # training see full depth (the tail alone is too short for the long MAs).
+    raw = store.read_ohlcv(conn, universe) or tail
 
     # Per-stock technical features -> daily_market.
     market: dict[str, pd.DataFrame] = {}
@@ -107,12 +133,14 @@ def daily_etl(
     with_sentiment: bool = True,
     as_of: _dt.date | None = None,
     db_path=None,
+    full: bool = False,
 ) -> dict:
     """Daily cron ETL (Phase 5): persist OHLCV + features + cross-asset, plus a dated
     sentiment snapshot so the live analyst signals accumulate history (the prerequisite
-    to making them trainable). Returns a summary dict for the cron log."""
+    to making them trainable). Incremental by default; ``full=True`` forces a full
+    re-fetch. Returns a summary dict for the cron log."""
     market, cross, raw = fetch_and_store(
-        tickers.ALL_TICKERS, start=start, end=end, db_path=db_path
+        tickers.ALL_TICKERS, start=start, end=end, db_path=db_path, full=full
     )
     sentiment_rows = 0
     if with_sentiment:
@@ -173,16 +201,25 @@ def run_phase1(
     tune: bool = True,
     strategy: str = "default",
     db_path=None,
+    progress=None,
 ) -> Phase1Result:
     """Run the full slice over the full ticker universe; return artifacts for UI/CLI.
 
     ``strategy`` selects the backtest/forecast book: ``"default"`` (the guardrailed
-    90/10 base case) or ``"aggressive"`` (the all-3x book; see ``run_aggressive_backtest``)."""
+    90/10 base case) or ``"aggressive"`` (the all-3x book; see ``run_aggressive_backtest``).
+    ``progress(fraction, label)`` is an optional callback the UI uses to drive a progress
+    bar through the main steps; it is a no-op when ``None`` (CLI)."""
+    def _tick(fraction: float, label: str) -> None:
+        if progress is not None:
+            progress(fraction, label)
+
     universe = tickers.ALL_TICKERS
+    _tick(0.05, "Fetching market data…")
     market, cross, raw = fetch_and_store(universe, start=start, end=end, db_path=db_path)
 
     # Feature panel + synthetic dataset + model. Train only on the pre-validation
     # split so the validation-window backtest is honest out-of-sample.
+    _tick(0.30, "Building dataset & training model…")
     panel = dataset.build_feature_panel(market, cross)
     prices = {t: pd.Series(df["close"].values, index=pd.to_datetime(df.index))
               for t, df in market.items()}
@@ -193,6 +230,7 @@ def run_phase1(
     # Rules + forecast backtest over the validation window (last VALIDATION_YEARS).
     # Run it first so the live forecast can be sized against the evolved book (cash on
     # hand + open positions), not a notional €100k.
+    _tick(0.70, "Running backtest…")
     val_start = (pd.Timestamp(market[next(iter(market))].index[-1])
                  - pd.DateOffset(years=config.VALIDATION_YEARS)).strftime("%Y-%m-%d")
     nasdaq = (raw[config.BENCHMARK_TICKER]["close"]
@@ -204,6 +242,7 @@ def run_phase1(
     # Live analyst/sentiment, then forecast from the latest snapshots. The sentiment
     # overlay tilts the live forecast only (these signals have no history to backtest);
     # apply_book_limits then caps buys at cash and sells at the held tier (Story.md).
+    _tick(0.85, "Live sentiment & forecast…")
     sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
                     if with_sentiment else pd.DataFrame())
     snaps = _live_snapshots(panel, sentiment_df)
@@ -215,6 +254,7 @@ def run_phase1(
     forecasts = overlay.apply_overlay(forecasts, sentiment_df, latest_close)
     forecasts = forecast.apply_book_limits(forecasts, *_book_cash_held(bt.final_state))
 
+    _tick(0.95, "Correlation & regime…")
     corr = _correlation_matrix({t: df["close"] for t, df in raw.items()})
     reg = (regime.detect_regime(
                raw["^GSPC"]["close"], raw["^VIX"]["close"],
@@ -222,6 +262,7 @@ def run_phase1(
                gold=raw["GC=F"]["close"] if "GC=F" in raw else None,
                oil=raw["CL=F"]["close"] if "CL=F" in raw else None)
            if "^GSPC" in raw and "^VIX" in raw else None)
+    _tick(1.0, "Done")
     return Phase1Result(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,

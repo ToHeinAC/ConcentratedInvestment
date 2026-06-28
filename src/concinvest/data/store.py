@@ -114,6 +114,34 @@ def upsert(conn: sqlite3.Connection, table: str, df: pd.DataFrame) -> int:
     return len(rows)
 
 
+def latest_date(conn: sqlite3.Connection, table: str = "ohlcv_raw") -> dict[str, str]:
+    """Most recent stored date per ticker -> ``{ticker: 'YYYY-MM-DD'}``.
+
+    Drives incremental fetching: only bars newer than the stored maximum need to be
+    re-downloaded (see ``pipeline.fetch_and_store``).
+    """
+    rows = conn.execute(f"SELECT ticker, MAX(date) FROM {table} GROUP BY ticker").fetchall()
+    return {t: d for t, d in rows if d is not None}
+
+
+def read_ohlcv(conn: sqlite3.Connection, tickers: list[str]) -> dict[str, pd.DataFrame]:
+    """Reconstruct the ``fetch.download_ohlcv`` shape (ticker -> date-indexed OHLCV
+    frame) from ``ohlcv_raw``, so a freshly-fetched tail can be merged with full
+    stored history before features are recomputed (SMA-200 etc. need the full depth).
+    """
+    df = pd.read_sql_query("SELECT * FROM ohlcv_raw", conn)
+    if df.empty:
+        return {}
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    out: dict[str, pd.DataFrame] = {}
+    for ticker in tickers:
+        sub = df[df["ticker"] == ticker].drop(columns="ticker").set_index("date").sort_index()
+        if not sub.empty:
+            sub.index.name = "date"
+            out[ticker] = sub
+    return out
+
+
 def read_table(conn: sqlite3.Connection, table: str, ticker: str | None = None) -> pd.DataFrame:
     """Read a table back as a DataFrame, optionally filtered by ticker."""
     sql = f"SELECT * FROM {table}"

@@ -38,7 +38,13 @@ status see [../IMPLEMENTATION.md](../IMPLEMENTATION.md); for the database tables
 ```
 
 `pipeline.run_phase1` wires the whole chain; `pipeline.fetch_and_store` is the
-reusable daily-ETL building block (later driven by the Phase 5 cron job).
+reusable daily-ETL building block (later driven by the Phase 5 cron job). It is
+**incremental**: only bars newer than the stored maximum (minus a `_REFETCH_OVERLAP_DAYS`
+overlap, since yfinance revises recent bars and posts dividends retroactively to
+`adj_close`) are downloaded, then merged with the full stored history read back via
+`store.read_ohlcv` so feature windows and training keep full depth. An empty/partial DB
+(or `full=True`, e.g. after a split rescales deep history) falls back to a full fetch
+from `start`.
 
 ## Module responsibilities
 
@@ -55,8 +61,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
   in `_parse_finanznachrichten`); `_iv_at` picks the nearest-strike implied vol.
 - **`store.py`** — SQLite. `connect()` creates the schema and runs `_migrate()`
   (additive `ALTER TABLE`s from `_MIGRATIONS` for pre-Phase-2 DBs); `upsert()` does
-  generic `INSERT OR REPLACE`; `read_table()` reads back. Date columns normalised to
-  ISO text PKs. See [SCHEMA.md](SCHEMA.md).
+  generic `INSERT OR REPLACE`; `read_table()` reads back. `latest_date()` returns the
+  max stored date per ticker and `read_ohlcv()` reconstructs the `download_ohlcv` shape
+  from `ohlcv_raw` — together they drive **incremental fetching** (`fetch_and_store`).
+  Date columns normalised to ISO text PKs. See [SCHEMA.md](SCHEMA.md).
 - **`portfolio_store.py`** — persistence for the Live tab's user portfolios. Each named
   portfolio is a CSV **file** under `data/portfolios/` (`list_portfolios` / `save_portfolio`
   / `load_portfolio`, all with an optional `base` dir for tests). One row per position
@@ -255,7 +263,10 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 - **`config.py`** — paths, dates (`START_DATE` 2020-01-01), portfolio/risk/tax
   constants, `BENCHMARK_TICKER` (`^IXIC`), `STREAMLIT_PORT` (8505).
 - **`pipeline.py`** — `run_phase1` / `fetch_and_store` orchestration (`Phase1Result`
-  also carries the feature `panel` for the Live tab); `daily_etl`
+  also carries the feature `panel` for the Live tab). `run_phase1` takes an optional
+  `progress(fraction, label)` callback that fires at each main step (fetch → train →
+  backtest → forecast → correlation/regime), driving the app's `st.progress` bar
+  (no-op for the CLI). `daily_etl`
   (the Phase 5 cron building block — `fetch_and_store` + a dated `sentiment_analyst`
   snapshot via `_fetch_sentiment(as_of=…)`, so the live analyst signals accumulate
   history); `build_dated_book(positions, market, cash)` — pure: turns **per-position dated
@@ -279,7 +290,12 @@ reusable daily-ETL building block (later driven by the Phase 5 cron job).
 ## Key design decisions
 
 - **Raw vs. derived split** — `ohlcv_raw` is stored separately from computed feature
-  tables so parameters can be re-tuned without re-downloading (Story.md).
+  tables so parameters can be re-tuned without re-downloading (Story.md). It is also the
+  cache that incremental fetching reads back (`store.read_ohlcv`): only the recent tail
+  is pulled from the network each run, then merged with stored history before features
+  recompute. The volume thus becomes the source of truth read into the model, not just
+  redeploy persistence — but the empty/partial-DB full-fetch fallback keeps a fresh
+  volume self-healing.
 - **Sentiment placeholders over history** — yfinance only exposes recent news, so
   historical `news_sentiment_score`/`put_call_ratio` default to neutral in the panel;
   live values are filled only at forecast time. Keeps `FEATURE_COLS` consistent

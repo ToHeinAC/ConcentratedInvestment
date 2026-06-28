@@ -63,6 +63,14 @@ Each run does `concinvest update --sentiment` then, if `ALERT_PORTFOLIO` is set,
 **only emails when something fires** — a buy/sell in the ML forecast or a mandatory
 risk-rule sell. Nothing fired → no email.
 
+`update` is **incremental** — it fetches only the recent tail from yfinance and merges
+it with the history already on the volume, so the daily run is fast and light on the
+network. This makes the volume the **source of truth** the model reads back (not just
+redeploy persistence): keep it attached and intact. After a **stock split** (which
+rescales deep history) run a one-off full re-fetch to resync: `concinvest update
+--sentiment --full`. An empty/partial volume self-heals — the first run falls back to a
+full fetch from `START_DATE`.
+
 Test it on demand from the Shell:
 
 ```bash

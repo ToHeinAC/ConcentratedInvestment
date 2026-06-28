@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     p_update.add_argument("--start", default=str(config.START_DATE))
     p_update.add_argument("--sentiment", action="store_true",
                           help="also snapshot dated analyst/sentiment rows (daily cron)")
+    p_update.add_argument("--full", action="store_true",
+                          help="force a full re-fetch from --start (else incremental tail only)")
 
     p_run = sub.add_parser("run", help="Run the full Phase 1 slice and print results")
     p_run.add_argument("--start", default=str(config.START_DATE))
@@ -67,14 +69,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.sentiment:
             from .pipeline import daily_etl
 
-            s = daily_etl(start=args.start)
+            s = daily_etl(start=args.start, full=args.full)
             print(f"daily ETL {s['as_of']}: {s['tickers']} tickers, {s['stocks']} "
                   f"stocks, {s['cross_rows']} cross rows, {s['sentiment_rows']} "
                   f"sentiment rows; db: {config.DB_PATH}")
             return 0
         from .pipeline import fetch_and_store
 
-        market, cross, raw = fetch_and_store(tickers.ALL_TICKERS, start=args.start)
+        market, cross, raw = fetch_and_store(tickers.ALL_TICKERS, start=args.start,
+                                             full=args.full)
         print(f"stored {len(raw)} tickers; {len(market)} stocks with features")
         print(f"cross-asset rows: {len(cross)}; db: {config.DB_PATH}")
         return 0
