@@ -420,6 +420,34 @@ def test_build_dated_book_high_water_never_below_current(synth_market):
     st = pipeline.build_dated_book(positions, synth_market, cash=0.0)
     drawdown = (st.high_water - st.total_value()) / st.high_water
     assert drawdown >= -1e-9  # never negative
+
+
+def test_build_dated_book_ignores_trailing_nan_close(synth_market):
+    # Regression: yfinance sometimes returns a NaN close for the latest bar. Such a
+    # trailing NaN must not poison the lot's value (-> book current value NaN and the
+    # position vanishing from the pie); valuation uses the last *valid* close.
+    import math
+
+    from concinvest import pipeline
+
+    t = next(iter(synth_market))
+    market = {k: v.copy() for k, v in synth_market.items()}
+    last_valid = float(market[t]["close"].iloc[-2])
+    market[t].iloc[-1, market[t].columns.get_loc("close")] = float("nan")  # NaN latest bar
+
+    buy = market[t].index[len(market[t]) // 3]
+    positions = [{"ticker": t, "tier": 3, "invested_eur": 1000.0, "buy_date": buy}]
+    st = pipeline.build_dated_book(positions, market, cash=500.0)
+
+    lot = next(l for l in st.lots if l.ticker == t)
+    assert math.isfinite(lot.value) and lot.value > 0  # not NaN -> still on the pie
+    assert math.isfinite(st.total_value())
+    # Value derives from the last valid close, not the NaN bar.
+    held = pd.Series(market[t]["close"].values,
+                     index=pd.to_datetime(list(market[t].index))).dropna()
+    held = held[held.index >= pd.Timestamp(buy)]
+    perf = last_valid / held.iloc[0] - 1.0
+    assert abs(lot.value - 1000.0 * (1.0 + 3.0 * perf)) < 1e-6
     assert st.high_water >= st.total_value() - 1e-6
 
 

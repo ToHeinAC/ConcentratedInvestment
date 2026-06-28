@@ -304,6 +304,10 @@ def _dated_lots_and_paths(positions, market: dict[str, pd.DataFrame]):
         tier = int(p["tier"])
         df = market[ticker]
         closes = pd.Series(df["close"].values, index=pd.to_datetime(list(df.index))).sort_index()
+        # Drop NaN closes so a single stale/missing bar (yfinance occasionally returns a
+        # NaN close for the latest day) can't poison the lot's value -> the whole book's
+        # current value going NaN and the position vanishing from the pie.
+        closes = closes.dropna()
         path = _lot_value_path(closes, tier, invested, p["buy_date"])
         current = float(path.iloc[-1]) if not path.empty else invested
         lots.append(Lot(ticker, tier, invested, current, tp_basis=invested))
