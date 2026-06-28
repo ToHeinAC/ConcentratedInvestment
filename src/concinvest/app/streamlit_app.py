@@ -83,10 +83,11 @@ def _trades_to_frame(trades) -> pd.DataFrame:
     )
 
 
-# show_spinner=False: progress is shown by an st.progress bar instead (driven by the
-# _progress callback). The callback is underscore-prefixed so st.cache_data does not
-# hash it (a cache hit returns instantly and never fires it — no bar flash).
-@st.cache_data(show_spinner=False, ttl=3600)
+# Not @st.cache_data: the _progress callback emits an st.progress element from inside
+# this function, and st.cache_data records such element messages and *replays* them on a
+# cache hit — onto the bar block created in main(), which no longer exists on replay
+# (CacheReplayClosureError). Result caching is done manually in main() via session_state
+# instead, so progress fires only on a real (re)compute and reruns return instantly.
 def _load(n_dataset: int, with_sentiment: bool, strategy: str, _progress=None):
     # Import here so the module loads fast even if heavy deps lag.
     from concinvest.pipeline import run_phase1
@@ -198,17 +199,24 @@ def main() -> None:
 
     if run:
         st.session_state["loaded"] = True
-        _load.clear()
 
-    # Progress bar through the main steps (only fires on a cache miss — i.e. after
-    # Run / refresh or a settings change; a cache hit returns instantly).
-    bar = st.empty()
+    # Manual result cache keyed on the inputs (see _load's note on why st.cache_data is
+    # unsafe here). Recompute on Run / refresh or when a setting changed; otherwise reuse
+    # the stored result so reruns (e.g. tab switches) return instantly without progress.
+    key = (n_dataset, with_sentiment, strategy)
+    cached = st.session_state.get("_load_cache")
+    if run or cached is None or cached[0] != key:
+        # Progress bar through the main steps — fires only on this real (re)compute.
+        bar = st.empty()
 
-    def _progress(fraction: float, label: str) -> None:
-        bar.progress(min(int(fraction * 100), 100), text=label)
+        def _progress(fraction: float, label: str) -> None:
+            bar.progress(min(int(fraction * 100), 100), text=label)
 
-    data = _load(n_dataset, with_sentiment, strategy, _progress=_progress)
-    bar.empty()
+        data = _load(n_dataset, with_sentiment, strategy, _progress=_progress)
+        bar.empty()
+        st.session_state["_load_cache"] = (key, data)
+    else:
+        data = cached[1]
 
     tab_live, tab_current, tab_forecast, tab_strategy = st.tabs(
         ["Live: Sample Portfolio", "ML: Current market",
