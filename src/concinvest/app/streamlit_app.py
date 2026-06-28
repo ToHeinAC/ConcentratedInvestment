@@ -659,22 +659,30 @@ def _render_sentiment(sent, market: dict, key: str = "sentiment_upside") -> None
     import plotly.graph_objects as go
 
     rows = _sentiment_rows(sent, market)[::-1]   # first stock at the top of the chart
-    pct = [(r["upside"] * 100 if r["upside"] is not None else 0.0) for r in rows]
-    labels = [f"{r['rating']} · {p:+.0f}%{_NEWS_ICONS[r['news']]}"
-              if r["upside"] is not None else f"{r['rating']} · —"
-              for r, p in zip(rows, pct)]
+    have = [r["upside"] is not None for r in rows]
+    pct = [(r["upside"] * 100 if h else 0.0) for r, h in zip(rows, have)]
+    labels = [f"{r['rating']} · {p:+.0f}%{_NEWS_ICONS[r['news']]}" if h else ""
+              for r, p, h in zip(rows, pct, have)]
     hover = [f"<b>{r['name']}</b><br>Analyst rating: {r['rating']}"
              f"<br>News tone: {r['news']}<br>Target upside: "
-             f"{p:+.0f}%" for r, p in zip(rows, pct)]
+             + (f"{p:+.0f}%" if h else "no analyst target (live fetch returned none)")
+             for r, p, h in zip(rows, pct, have)]
     lo, hi = min(pct + [0.0]), max(pct + [0.0])
     span = (hi - lo) or 1.0
 
     st.subheader("Analyst & sentiment (live)")
     fig = go.Figure(go.Bar(
         x=pct, y=[r["name"] for r in rows], orientation="h",
-        marker={"color": [_RATING_COLORS[r["rating"]] for r in rows]},
+        marker={"color": [_RATING_COLORS[r["rating"]] for r in rows],
+                "pattern": {"shape": ["" if h else "/" for h in have],
+                            "fgcolor": "#9e9e9e", "bgcolor": "#eee"}},
         text=labels, textposition="outside", cliponaxis=False,
         hovertext=hover, hoverinfo="text"))
+    for r, h in zip(rows, have):   # explicit marker so a no-target row isn't blank
+        if not h:
+            fig.add_annotation(
+                x=0, y=r["name"], text="⊘ no analyst target", showarrow=False,
+                xanchor="left", xshift=6, font={"color": "#9e9e9e", "size": 12})
     fig.add_vline(x=0, line_width=1, line_color="#bbb")
     fig.update_layout(height=70 + 56 * len(rows), bargap=0.45,
                       xaxis_title="Upside to mean analyst price target",
@@ -684,7 +692,8 @@ def _render_sentiment(sent, market: dict, key: str = "sentiment_upside") -> None
                       margin={"l": 0, "r": 10, "t": 10, "b": 0})
     st.plotly_chart(fig, width="stretch", key=key)
     st.caption("Bar length = upside to mean analyst price target · colour = consensus "
-               "rating (red Sell → green Buy) · ▲/■/▼ = news-headline tone. Live "
+               "rating (red Sell → green Buy) · ▲/■/▼ = news-headline tone · "
+               "⊘ = no analyst target returned this fetch. Live "
                "signals (display only; no history to train on yet).")
 
 
