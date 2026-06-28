@@ -206,14 +206,17 @@ def main() -> None:
     key = (n_dataset, with_sentiment, strategy)
     cached = st.session_state.get("_load_cache")
     if run or cached is None or cached[0] != key:
-        # Progress bar through the main steps — fires only on this real (re)compute.
-        bar = st.empty()
+        # st.status, not a value-streamed st.progress bar: behind Railway's buffering
+        # WebSocket proxy the bar's rapid intermediate frames are coalesced and never
+        # render (only the final bar.empty() survives). st.status is a single persistent
+        # container whose spinner + per-step label updates survive the proxy. Fires only
+        # on this real (re)compute.
+        with st.status("Fetching data & training model…", expanded=False) as status:
+            def _progress(fraction: float, label: str) -> None:
+                status.update(label=f"{label} ({int(fraction * 100)}%)")
 
-        def _progress(fraction: float, label: str) -> None:
-            bar.progress(min(int(fraction * 100), 100), text=label)
-
-        data = _load(n_dataset, with_sentiment, strategy, _progress=_progress)
-        bar.empty()
+            data = _load(n_dataset, with_sentiment, strategy, _progress=_progress)
+            status.update(label="Done", state="complete")
         st.session_state["_load_cache"] = (key, data)
     else:
         data = cached[1]
