@@ -273,16 +273,20 @@ def run_phase1(
 def _lot_value_path(closes: pd.Series, tier: int, invested: float, entry) -> pd.Series:
     """Value path of an ``invested``-EUR tier-``tier`` lot opened at ``entry``.
 
-    Simple-leverage model (Live tab): ``value = invested * (1 + tier * perf)`` where
-    ``perf`` is the underlying's **total** % return since the buy date — i.e. the
-    underlying performance scaled by the leverage, *not* daily-rebalanced compounding.
-    Floored at 0 (a long position can't be worth less than nothing). Empty if ``entry``
-    is past the last close."""
+    Daily-rebalanced constant-leverage model (matches a real Nx leveraged ETF and the
+    backtest's ``state.mark``): the lot's value evolves by ``(1 + tier * daily_return)``
+    each day, so the path is the cumulative product of those daily factors, not the total
+    return scaled once. A +1% underlying day moves a 3x lot +3% *that day*; the
+    compounding (and volatility decay) is captured. The daily factor is floored at 0, so a
+    wipe-out day (underlying −1/tier) zeroes the lot and it stays there (a long position
+    can't be worth less than nothing). Tier 1 reduces to ``invested * close/entry-close``.
+    Empty if ``entry`` is past the last close."""
     held = closes[closes.index >= pd.Timestamp(entry)]
     if held.empty:
         return pd.Series(dtype=float)
-    perf = held / held.iloc[0] - 1.0  # total underlying performance since entry
-    return (invested * (1.0 + tier * perf)).clip(lower=0.0)
+    daily = held.pct_change().fillna(0.0)  # first day = 0 (entry, no drift yet)
+    factor = (1.0 + tier * daily).clip(lower=0.0).cumprod()
+    return invested * factor
 
 
 def _dated_lots_and_paths(positions, market: dict[str, pd.DataFrame]):
@@ -336,8 +340,8 @@ def build_dated_book(positions, market: dict[str, pd.DataFrame], cash: float):
     ``positions`` is a DataFrame or iterable of mappings with ``ticker, tier,
     invested_eur, buy_date`` — the EUR invested in one ``(stock, tier)`` on **its own buy
     date** (each tier's date is evaluated separately). A lot's **cost basis** is the
-    invested amount (the real tax basis), its **current value** is ``invested * (1 + tier *
-    underlying-%-return-since-buy-date)`` (simple leverage, `_lot_value_path`), and its
+    invested amount (the real tax basis), its **current value** is the daily-rebalanced
+    Nx-leverage path (``_lot_value_path``: cumprod of ``1 + tier * daily_return``), and its
     take-profit reference starts at cost. The book's **high-water** is the peak of the
     combined daily value (cash + lots, 0 before each lot's buy date, held flat across
     gaps), so the drawdown guardrail is meaningful. Pure (no network) — derives everything

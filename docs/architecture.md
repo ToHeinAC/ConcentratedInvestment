@@ -221,9 +221,10 @@ from `start`.
   per position — the € **invested** and a **separate buy date** for each tier (stock / 2x /
   3x) of each stock — plus cash; a **💾 Save / update** button writes it back to the chosen
   CSV (buy dates default to **today** — a book entered "as it is right now" starts at
-  current ≈ invested). `pipeline.build_dated_book` derives each lot's **current value** as
-  `invested × (1 + tier × underlying-%-return-since-its-buy-date)` (simple leverage —
-  the underlying move scaled by leverage, no daily compounding; floored at €0), keeps the
+  current ≈ invested). `pipeline.build_dated_book` derives each lot's **current value** by the
+  daily-rebalanced Nx-leverage path (`_lot_value_path`: cumprod of `1 + tier ×
+  underlying-daily-return` since the buy date — a real leveraged ETF, matching the
+  backtest's `state.mark`; daily factor floored at 0), keeps the
   real **cost basis**, and computes the book's **high-water** (always ≥ current, so the
   drawdown can't go negative), shown as invested / current / drawdown metrics + a **Plotly
   pie** of current value per position (invested € and P&L on hover) **next to** a
@@ -271,11 +272,12 @@ from `start`.
   snapshot via `_fetch_sentiment(as_of=…)`, so the live analyst signals accumulate
   history); `build_dated_book(positions, market, cash)` — pure: turns **per-position dated
   invested amounts** (`ticker, tier, invested_eur, buy_date` — each tier its own date) into
-  a `PortfolioState` (current value = `invested × (1 + tier × underlying-%-return)` since
-  the buy date — simple leverage, `_lot_value_path`; real cost basis, derived high-water
-  that always includes "now", so drawdown ≥ 0 even for lots bought past the last close);
-  `dated_book_value_path(positions, market, cash)` — pure: the daily combined book €-value
-  (cash + each lot's simple-leverage path, the same series whose peak sets the high-water),
+  a `PortfolioState` (current value = the daily-rebalanced Nx-leverage path, cumprod of
+  `1 + tier × underlying-daily-return` since the buy date — `_lot_value_path`; real cost
+  basis, derived high-water that always includes "now", so drawdown ≥ 0 even for lots
+  bought past the last close); `dated_book_value_path(positions, market, cash)` — pure: the
+  daily combined book €-value (cash + each lot's leverage path, the same series whose peak
+  sets the high-water),
   for the Live tab's performance-vs-NASDAQ chart (`build_dated_book` and it share the
   `_dated_lots_and_paths` / `_combine_paths` helpers);
   `recommend_for_portfolio(state, model, panel, market, strategy, …)` — side-effect-free
@@ -302,10 +304,13 @@ from `start`.
   between training and inference. The other live analyst signals (EPS revisions,
   target, IV skew) likewise have no history and so are stored/displayed only, never
   trained on (a tree gains nothing from columns constant over training).
-- **Leverage** — in the backtests, 2x/3x are daily-rebalanced constant-leverage return
-  multipliers (documented assumption; real LETF instruments revisited later). The Live
-  tab uses a deliberately simpler model for the user's own book — `invested × (1 + tier ×
-  total underlying return since the buy date)` — so a position's value is just its
-  underlying performance scaled by leverage.
+- **Leverage** — 2x/3x are daily-rebalanced constant-leverage return multipliers
+  everywhere (documented assumption; real LETF instruments revisited later): a tier-k
+  lot's value evolves by `(1 + k × underlying_daily_return)` each day, so a +1% underlying
+  day moves a 3x lot +3% *that day* and the compounding/volatility-decay is captured. The
+  backtests apply this via `state.mark`; the Live tab's user book reuses the **same** model
+  as a per-lot path from each lot's buy date (`_lot_value_path`: cumprod of the daily
+  factors, floored at 0). (Previously the Live tab used a simpler `invested × (1 + tier ×
+  total return)` that under-stated leverage and diverged from the backtest — now unified.)
 - **Network isolation** — all network calls live in `data.fetch`; every other module
   is pure and unit-tested offline with the synthetic fixtures in `tests/conftest.py`.

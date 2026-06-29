@@ -398,9 +398,10 @@ def _render_live(data: dict) -> None:
     m1.metric("Invested (cost)", f"€{invested:,.0f}")
     m2.metric("Current value", f"€{current:,.0f}", delta=f"{current / invested - 1:+.1%}"
               if invested else None,
-              help="Per position: invested € × (1 + leverage × underlying % return since "
-                   "its buy date). Leverage just scales the underlying move (no daily "
-                   "compounding); floored at €0.")
+              help="Per position: daily-rebalanced Nx leverage from its buy date, like a "
+                   "real leveraged ETF — each day the lot moves leverage × the underlying's "
+                   "daily move (so +1% underlying = +3% for a 3x that day), compounded; "
+                   "floored at €0.")
     m3.metric("Drawdown from peak", f"{drawdown:.1%}",
               help="How far the book's current value sits below its highest value reached "
                    "since the earliest buy date (peak − current) / peak. 0% means you're at "
@@ -410,8 +411,8 @@ def _render_live(data: dict) -> None:
         with col_pie:
             st.markdown("**Current value by position**")
             st.plotly_chart(_book_pie(state), width="stretch")
-            st.caption("Current value = invested × (1 + leverage × underlying % return "
-                       "since the buy date). Hover a slice for its invested € and P&L.")
+            st.caption("Current value = daily-rebalanced Nx leverage (a real leveraged ETF) "
+                       "compounded from the buy date. Hover a slice for its invested € and P&L.")
         with col_perf:
             st.markdown("**Performance since inception vs NASDAQ**")
             book_path = dated_book_value_path(positions, market, cash)

@@ -374,19 +374,20 @@ def test_build_dated_book_per_tier_dates(synth_market):
     h1 = closes[closes.index >= early]
     lot1 = next(l for l in st.lots if l.tier == 1)
     assert abs(lot1.value - 1000.0 * h1.iloc[-1] / h1.iloc[0]) < 1e-6  # 1x from early date
-    # 3x marked from its own (later) buy date: simple leverage on the total return
-    # (invested * (1 + 3*perf)), not daily-rebalanced compounding.
+    # 3x marked from its own (later) buy date: daily-rebalanced 3x leverage (a real
+    # leveraged ETF / the backtest's state.mark) — cumprod of (1 + 3*daily_return),
+    # not the total return scaled once.
     h3 = closes[closes.index >= late]
-    perf3 = h3.iloc[-1] / h3.iloc[0] - 1.0
+    factor3 = (1.0 + 3.0 * h3.pct_change().fillna(0.0)).clip(lower=0.0).cumprod()
     lot3 = next(l for l in st.lots if l.tier == 3)
-    assert abs(lot3.value - 1000.0 * (1.0 + 3.0 * perf3)) < 1e-6
+    assert abs(lot3.value - 1000.0 * factor3.iloc[-1]) < 1e-6
     assert lot3.tp_basis == 1000.0  # take-profit reference starts at cost
     assert st.high_water >= st.total_value() - 1e-6  # peak of the marked book path
 
 
 def test_dated_book_value_path(synth_market):
     # The Live tab's performance chart: combined €-value path = cash + each lot's
-    # simple-leverage value, starting at the earliest buy date. Its first point equals
+    # daily-rebalanced leverage value, starting at the earliest buy date. Its first equals
     # cash + invested (no drift yet) and its last equals the marked book value.
     from concinvest import pipeline
 
@@ -442,12 +443,13 @@ def test_build_dated_book_ignores_trailing_nan_close(synth_market):
     lot = next(l for l in st.lots if l.ticker == t)
     assert math.isfinite(lot.value) and lot.value > 0  # not NaN -> still on the pie
     assert math.isfinite(st.total_value())
-    # Value derives from the last valid close, not the NaN bar.
+    # Value derives from the last valid close, not the NaN bar (daily-rebalanced 3x).
     held = pd.Series(market[t]["close"].values,
                      index=pd.to_datetime(list(market[t].index))).dropna()
     held = held[held.index >= pd.Timestamp(buy)]
-    perf = last_valid / held.iloc[0] - 1.0
-    assert abs(lot.value - 1000.0 * (1.0 + 3.0 * perf)) < 1e-6
+    factor = (1.0 + 3.0 * held.pct_change().fillna(0.0)).clip(lower=0.0).cumprod()
+    assert abs(lot.value - 1000.0 * factor.iloc[-1]) < 1e-6
+    assert abs(held.iloc[-1] - last_valid) < 1e-9  # last valid close, not the NaN bar
     assert st.high_water >= st.total_value() - 1e-6
 
 

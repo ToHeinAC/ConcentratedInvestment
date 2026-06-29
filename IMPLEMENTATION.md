@@ -281,9 +281,10 @@ unless changed.
   grid holds the € **invested** and a **separate buy date for each position** (stock / 2x /
   3x of each stock; buy dates default to **today** so a fresh book starts at current ≈
   invested), plus cash; **💾 Save / update** persists it to the chosen file.
-  `pipeline.build_dated_book` derives each lot's **current value** as `invested × (1 + tier ×
-  underlying-%-return-since-its-buy-date)` (simple leverage — the underlying move scaled by
-  leverage, no daily compounding; floored at €0, `_lot_value_path`), keeps the real **cost
+  `pipeline.build_dated_book` derives each lot's **current value** by the daily-rebalanced
+  Nx-leverage path (`_lot_value_path`: cumprod of `1 + tier × underlying-daily-return` since
+  the buy date — a real leveraged ETF, matching the backtest's `state.mark`; daily factor
+  floored at 0), keeps the real **cost
   basis**, and computes the book's **high-water** (peak of the marked book path, **always ≥
   current** so drawdown can't go negative — incl. lots bought past their last close) — shown
   as invested / current / drawdown metrics + a **Plotly pie** of current value per position
@@ -353,8 +354,8 @@ in WAL mode so the app reads while the cron writes.
   final-state, riskiest-tier-first trim, 6% per-name drawdown floor (cash < 70%),
   underlying-dominance leverage trim, €500 min-trade skip (guardrails + forecast),
   forecast book-limits (cash/holdings caps), dated-book derivation
-  (`build_dated_book` — per-tier buy dates → simple-leverage current value + cost basis +
-  high-water never below current → drawdown ≥ 0), portfolio-store CSV save/load round-trip
+  (`build_dated_book` — per-tier buy dates → daily-rebalanced Nx-leverage current value +
+  cost basis + high-water never below current → drawdown ≥ 0), portfolio-store CSV save/load round-trip
   (per-position dates preserved),
   and user-book live recommendations (`recommend_for_portfolio` — actions fire +
   side-effect-free), safe-exit self-SIGTERM (own PID only),
