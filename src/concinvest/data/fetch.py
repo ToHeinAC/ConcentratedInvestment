@@ -9,6 +9,7 @@ the pipeline never hard-fails on a single missing ticker.
 from __future__ import annotations
 
 import datetime as _dt
+import sys
 import time
 
 import pandas as pd
@@ -44,7 +45,39 @@ def download_ohlcv(
 
     Returns a mapping ticker -> tidy DataFrame indexed by date with columns
     open/high/low/close/adj_close/volume. Tickers with no data are omitted.
+
+    A threaded batch download of the full universe is regularly rate-limited by
+    Yahoo, which drops some tickers from the result *without raising*. Any ticker
+    missing after the batch is therefore retried **individually** (single-ticker
+    requests survive rate limiting far better), spaced by ``_META_DELAY``; a ticker
+    still unavailable after that is skipped (degrade, don't hard-fail) and reported
+    on stderr so the cron log shows which symbols came back empty.
     """
+    result = _download_batch(tickers, start, end, retries)
+    for ticker in [t for t in tickers if t not in result]:
+        time.sleep(_META_DELAY)
+        try:
+            result.update(_download_batch([ticker], start, end, retries))
+        except Exception:  # noqa: BLE001 - a single flaky ticker must not fail the run
+            pass
+    still_missing = [t for t in tickers if t not in result]
+    if still_missing:
+        print(
+            f"[concinvest] no OHLCV returned for {len(still_missing)} ticker(s): "
+            f"{', '.join(still_missing)}",
+            file=sys.stderr,
+        )
+    return result
+
+
+def _download_batch(
+    tickers: list[str],
+    start: _dt.date | str,
+    end: _dt.date | str | None,
+    retries: int,
+) -> dict[str, pd.DataFrame]:
+    """One batched ``yf.download`` with retry-on-exception; partial results (some
+    tickers dropped by rate limiting) are returned as-is for the caller to backfill."""
     last_err: Exception | None = None
     for attempt in range(retries):
         try:

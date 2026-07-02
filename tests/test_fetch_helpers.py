@@ -43,3 +43,37 @@ def test_parse_finanznachrichten_respects_max_items():
     )
     out = fetch._parse_finanznachrichten(f"<html><body>{links}</body></html>", max_items=5)
     assert len(out) == 5
+
+
+def test_download_ohlcv_retries_dropped_tickers_individually(monkeypatch):
+    """A batch that drops a ticker (rate-limited) triggers an individual retry that
+    backfills it, so a partial batch result is not silently accepted."""
+    calls: list = []
+
+    def fake_batch(tickers, start, end, retries):
+        calls.append(list(tickers))
+        if len(tickers) > 1:  # batch drops TSLA, returns only SIE.DE
+            return {"SIE.DE": pd.DataFrame({"close": [1.0]})}
+        return {tickers[0]: pd.DataFrame({"close": [2.0]})}  # individual retry succeeds
+
+    monkeypatch.setattr(fetch, "_download_batch", fake_batch)
+    monkeypatch.setattr(fetch.time, "sleep", lambda *_: None)
+
+    out = fetch.download_ohlcv(["SIE.DE", "TSLA"])
+    assert set(out) == {"SIE.DE", "TSLA"}
+    assert calls[0] == ["SIE.DE", "TSLA"]  # batch first
+    assert ["TSLA"] in calls               # then the dropped ticker individually
+
+
+def test_download_ohlcv_degrades_on_persistently_missing_ticker(monkeypatch):
+    """A ticker that keeps failing its individual retry is skipped, not fatal."""
+    def fake_batch(tickers, start, end, retries):
+        if len(tickers) > 1:
+            return {"SIE.DE": pd.DataFrame({"close": [1.0]})}
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr(fetch, "_download_batch", fake_batch)
+    monkeypatch.setattr(fetch.time, "sleep", lambda *_: None)
+
+    out = fetch.download_ohlcv(["SIE.DE", "TSLA"])
+    assert set(out) == {"SIE.DE"}  # TSLA dropped, run still returns what it could get

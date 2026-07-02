@@ -100,14 +100,21 @@ def test_fetch_and_store_full_refetch(tmp_path, synth_raw, monkeypatch):
     assert calls[1] == dt.date(2020, 1, 1)
 
 
-def test_fetch_and_store_partial_db_full_fetch(tmp_path, synth_raw, monkeypatch):
-    """A db missing some universe tickers falls back to a full fetch (self-healing)."""
+def test_fetch_and_store_partial_db_only_missing_full_fetch(tmp_path, synth_raw, monkeypatch):
+    """Only the *missing* tickers get a full fetch; already-stored tickers stay
+    incremental. A single missing ticker must not force a full universe re-fetch (that
+    all-or-nothing behaviour amplified yfinance rate limiting on the deployed cron)."""
     db = tmp_path / "partial.sqlite"
     calls: list = []
     monkeypatch.setattr(pipeline.fetch, "download_ohlcv",
                         _capture_download(synth_raw, calls))
 
     pipeline.fetch_and_store(["TSLA"], start=dt.date(2020, 1, 1), db_path=db)
-    # Now ask for the full universe; SIE.DE etc. are absent -> fetch from start again.
-    pipeline.fetch_and_store(list(synth_raw), start=dt.date(2020, 1, 1), db_path=db)
-    assert calls[1] == dt.date(2020, 1, 1)
+    calls.clear()
+    # Now ask for the full universe; SIE.DE etc. are absent -> only those fetch from start,
+    # while the stored TSLA pulls just its recent tail.
+    _m, _c, raw = pipeline.fetch_and_store(list(synth_raw), start=dt.date(2020, 1, 1), db_path=db)
+
+    assert dt.date(2020, 1, 1) in calls                  # missing tickers -> full history
+    assert any(c > dt.date(2020, 1, 1) for c in calls)   # stored TSLA -> incremental tail
+    assert set(raw) == set(synth_raw)                    # everything ends up merged

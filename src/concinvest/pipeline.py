@@ -65,16 +65,23 @@ def fetch_and_store(
     """
     conn = store.connect(db_path)
 
-    # Decide the fetch window: incremental tail when every ticker is already stored,
-    # else a full history pull from ``start``.
+    # Decide the fetch window **per ticker**: already-stored tickers pull only the recent
+    # tail (min stored date across them, minus the overlap); tickers not yet stored (first
+    # run, or dropped by a prior rate-limited fetch) pull full history from ``start``.
+    # Deciding per ticker — not all-or-nothing — stops a single missing/flaky ticker from
+    # forcing a full re-fetch of the whole universe every run, which amplified rate
+    # limiting and left the data chronically partial on the deployed cron.
     stored = {} if full else store.latest_date(conn)
-    if stored and all(t in stored for t in universe):
-        seam = min(pd.to_datetime(d) for d in stored.values())
-        fetch_start: _dt.date | str = (seam - pd.Timedelta(days=_REFETCH_OVERLAP_DAYS)).date()
-    else:
-        fetch_start = start
+    present = [t for t in universe if t in stored]
+    missing = [t for t in universe if t not in stored]
 
-    tail = fetch.download_ohlcv(universe, start=fetch_start, end=end)
+    tail: dict[str, pd.DataFrame] = {}
+    if present:
+        seam = min(pd.to_datetime(stored[t]) for t in present)
+        inc_start = (seam - pd.Timedelta(days=_REFETCH_OVERLAP_DAYS)).date()
+        tail.update(fetch.download_ohlcv(present, start=inc_start, end=end))
+    if missing:
+        tail.update(fetch.download_ohlcv(missing, start=start, end=end))
 
     # Persist the freshly-fetched bars (overlap rows refreshed idempotently).
     for ticker, df in tail.items():

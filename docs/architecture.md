@@ -39,12 +39,15 @@ status see [../IMPLEMENTATION.md](../IMPLEMENTATION.md); for the database tables
 
 `pipeline.run_phase1` wires the whole chain; `pipeline.fetch_and_store` is the
 reusable daily-ETL building block (later driven by the Phase 5 cron job). It is
-**incremental**: only bars newer than the stored maximum (minus a `_REFETCH_OVERLAP_DAYS`
-overlap, since yfinance revises recent bars and posts dividends retroactively to
-`adj_close`) are downloaded, then merged with the full stored history read back via
-`store.read_ohlcv` so feature windows and training keep full depth. An empty/partial DB
-(or `full=True`, e.g. after a split rescales deep history) falls back to a full fetch
-from `start`.
+**incremental per ticker**: an already-stored ticker downloads only bars newer than its
+stored maximum (minus a `_REFETCH_OVERLAP_DAYS` overlap, since yfinance revises recent
+bars and posts dividends retroactively to `adj_close`), while a ticker **not yet stored**
+pulls full history from `start` (self-healing). Deciding per ticker — not all-or-nothing
+— means one missing/flaky ticker no longer forces a full re-fetch of the whole universe
+(the old behaviour amplified rate limiting and left the deployed cron's data chronically
+partial). Fetched bars merge with the full stored history read back via
+`store.read_ohlcv` so feature windows and training keep full depth. `full=True` (e.g.
+after a split rescales deep history) forces a full re-fetch of everything.
 
 ## Module responsibilities
 
@@ -53,7 +56,12 @@ from `start`.
   `BONDS`, `MACRO`, `CRYPTO`. `CORE_TICKERS` (13) is the Phase 1 slice; `ALL_TICKERS`
   (27, de-duplicated) is the full universe; `NAMES` is a flat lookup.
 - **`fetch.py`** — all network access. `download_ohlcv()` batches via
-  `yf.download(group_by="ticker", threads=True)` with retries; per-ticker
+  `yf.download(group_by="ticker", threads=True)` (a `_download_batch` with
+  retry-on-exception) and then **backfills any ticker the batch dropped** with an
+  individual single-ticker retry — Yahoo rate-limits threaded batches by silently
+  omitting tickers (no exception), so partial results are not accepted; a ticker still
+  empty after its individual retry is skipped (degrade, not fail) and logged to stderr.
+  Per-ticker
   `fetch_recommendation_mean()`, `fetch_news_headlines()`, `fetch_put_call_ratio()`,
   `fetch_eps_revisions()`, `fetch_analyst_target_mean()`, `fetch_iv_skew()` carry a
   `_META_DELAY` (0.5s) pause and degrade to `None`/`[]` on error.

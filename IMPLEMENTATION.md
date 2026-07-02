@@ -56,12 +56,20 @@ config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 
 **Data flow:** `fetch → features → store (SQLite) → ml.dataset panel → ml.model →
 {forecast, backtest} → app`. Orchestrated by `pipeline.run_phase1`;
-`pipeline.fetch_and_store` is the reusable daily-ETL block. **Incremental fetch:**
-`fetch_and_store` pulls only bars newer than `store.latest_date` (minus a 7-day overlap
-for yfinance's retroactive bar/dividend revisions), then merges with full stored history
-read back via `store.read_ohlcv` so feature windows + training keep full depth. Empty/
-partial DB (or `--full`) → full fetch from `START_DATE` (self-healing). The model still
-trains on the full in-memory series; the win is network/latency, not training time.
+`pipeline.fetch_and_store` is the reusable daily-ETL block. **Incremental fetch (per
+ticker):** each already-stored ticker pulls only bars newer than `store.latest_date`
+(minus a 7-day overlap for yfinance's retroactive bar/dividend revisions); only tickers
+**not yet stored** pull full history from `START_DATE` (self-healing). The decision is
+per ticker, not all-or-nothing — a single missing/flaky ticker no longer forces a full
+re-fetch of the whole universe (that amplified yfinance rate limiting and left the
+deployed cron's data chronically partial). Fetched bars merge with full stored history
+read back via `store.read_ohlcv` so feature windows + training keep full depth. `--full`
+forces a full re-fetch (e.g. after a split). **Rate-limit resilience:**
+`fetch.download_ohlcv` retries any ticker the threaded batch drops (Yahoo rate limits
+partial batches *without raising*) **individually** — single-ticker requests survive
+rate limiting far better — degrading (skip + stderr warning) only if a ticker is still
+empty after that. The model still trains on the full in-memory series; the win is
+network/latency, not training time.
 
 **Database:** 4 tables — `ohlcv_raw`, `daily_market` (Table 1), `sentiment_analyst`
 (Table 2), `cross_asset` (Table 3). Raw OHLCV kept separate from derived features.
