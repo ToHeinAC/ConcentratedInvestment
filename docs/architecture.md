@@ -294,7 +294,7 @@ after a split rescales deep history) forces a full re-fetch of everything.
   value/cost-aware actions (`_strategy_actions`: `rules.apply_guardrails` for default;
   `_agg_stop_loss` + `_agg_take_profit` + `trim_overweight` for aggressive; on a deep copy).
   Powers the Live tab.
-- **`cli.py`** — `concinvest {info,update,run,validate}`; `update --sentiment` runs
+- **`cli.py`** — `concinvest {info,update,run,notify,validate}`; `update --sentiment` runs
   `daily_etl` (the daily cron entry, wrapped by `scripts/daily_update.sh`).
 
 ## Key design decisions

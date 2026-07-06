@@ -69,24 +69,21 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ### 5.1 Documentation
 For the project´s documentation, use IMPLEMENTATION.md as your main reference. Keep this one very compact and readable (under 500 lines). This one shall refer to the deep documentation of each component, which is under docs/ folder, e.g. docs/architecture.md etc. Generate a README.md
 
-**Documentation map (read before working on a component).** Only
-`@IMPLEMENTATION.md` is auto-loaded into context (current state); the others are
-plain links — open them on demand, to keep per-session context small:
-- [Story.md](Story.md) — PRD: original purpose, portfolio rules, ticker universe, feature/ML targets.
-- [IMPLEMENTATION.md](IMPLEMENTATION.md) @IMPLEMENTATION.md — current state, phase status, module map, run/verify — **start here**.
-- [docs/architecture.md](docs/architecture.md) — module responsibilities, data-flow diagram, key design decisions.
-- [docs/SCHEMA.md](docs/SCHEMA.md) — SQLite tables (ohlcv_raw, daily_market, sentiment_analyst, cross_asset) + the `FEATURE_COLS` model contract.
+**Documentation map (read before working on a component):**
+- [Story.md](Story.md) @Story.md PRD: original purpose, portfolio rules, ticker universe, feature/ML targets.
+- [IMPLEMENTATION.md](IMPLEMENTATION.md) @IMPLEMENTATION.md Current state, phase status, module map, run/verify — start here.
+- [docs/architecture.md](docs/architecture.md) @docs/architecture.md Module responsibilities, data flow diagram, key design decisions.
+- [docs/SCHEMA.md](docs/SCHEMA.md) @docs/SCHEMA.md SQLite tables (ohlcv_raw, daily_market, sentiment_analyst, cross_asset) + the `FEATURE_COLS` model contract.
 
-**Current state:** see [IMPLEMENTATION.md §3](IMPLEMENTATION.md) for the authoritative
-phase table (single source of truth — do not restate phase status here).
+**Current state:** Phase 1 done — live end-to-end slice (fetch → features → SQLite → synthetic dataset → RandomForest → 5-field forecast → backtest vs NASDAQ → Streamlit). Beating NASDAQ is the Phase 3 tuning target. Phases 2–5 planned (see IMPLEMENTATION.md §3).
 
-**Conventions:** Python 3.11+, `uv` (run `uv run …`), `pytest` (offline via `tests/conftest.py` synthetic fixtures — keep network out of the suite). All network access stays in `data/fetch.py`. **Streamlit on port 8505** — this project deliberately overrides the global ">8510" rule. **Safe-exit button** sends `SIGTERM` to the app's **own** PID (`os.kill(os.getpid(), …)`) — it never `lsof`/port-kills, so a shared/forwarded port or SSH tunnel is left untouched (overrides the global `lsof … kill -9` rule). Functions ≤ ~40 lines; tests-first for behaviour changes; secrets never committed; runtime `data/` gitignored.
+**Conventions:** Python 3.11+, `uv` (run `uv run …`), `pytest` (offline via `tests/conftest.py` synthetic fixtures — keep network out of the suite). All network access stays in `data/fetch.py`. Streamlit on port 8505. Functions ≤ ~40 lines; tests-first for behaviour changes; secrets never committed; runtime `data/` gitignored.
 
 ### 5.2 Efficency
 This project must be implemented efficiently, without unnecessary code or complexity. For this follow the rules:
 - Keep implementation and documentation precision such that the author as well as Claude Code etc. do not get confused.
-- Whenever AI coding tools are used, those must plan and implement token-efficient. Useful documentation hierarchy:
-    - Story.md is the PRD — the main reference for the project's original purpose and goals
+- Whenever AI coding tools are used, those must plan and implement token-efficient. Usefull documentation hierarchy:
+    - PRD.md as the main reference for the project's original purpose and goals
     - IMPLEMENTATION.md as the main reference for the current implementation state; also referencing specific details documented in the docs/ folder.
     - docs/ folder for detailed documentation of each component
 - Be aware that whenever the project is progressed by using AI coding tools, a different AI coding tool may be used to confirm best implementation according to the rules, e.g. new code by Claude Code will be critically reviewed by Codex. It is important that the first implementation is as good as possible, to avoid unnecessary work.

@@ -36,7 +36,7 @@ Python 3.11+ · `uv` · `pandas` · `yfinance` · `scikit-learn` (RandomForest) 
 | **0** | Scaffold: package, config, tickers, CLI, tests, Docker, exit button | ✅ done |
 | **1** | Thin end-to-end slice (all layers, sentiment-aware) | ✅ done |
 | **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum | ✅ done |
-| **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | ✅ done (marginal win accepted) |
+| **3** | Full 100k synthetic dataset, TimeSeriesSplit tuning, feature-importance selection — **tune to beat NASDAQ** | ✅ done (beats NASDAQ on walk-forward — see §5c) |
 | **4** | Full rules engine (allocation/risk/leverage/drawdown/trim/crisis) + German tax + dividends, in backtest | ✅ done |
 | **5** | UI polish (regime detection), daily cron (~22:00 CET), Docker deploy | 🔄 in progress (cron + sentiment snapshot + regime badge done) |
 
@@ -56,20 +56,13 @@ config.py · pipeline.py (run_phase1 / fetch_and_store) · cli.py
 
 **Data flow:** `fetch → features → store (SQLite) → ml.dataset panel → ml.model →
 {forecast, backtest} → app`. Orchestrated by `pipeline.run_phase1`;
-`pipeline.fetch_and_store` is the reusable daily-ETL block. **Incremental fetch (per
-ticker):** each already-stored ticker pulls only bars newer than `store.latest_date`
-(minus a 7-day overlap for yfinance's retroactive bar/dividend revisions); only tickers
-**not yet stored** pull full history from `START_DATE` (self-healing). The decision is
-per ticker, not all-or-nothing — a single missing/flaky ticker no longer forces a full
-re-fetch of the whole universe (that amplified yfinance rate limiting and left the
-deployed cron's data chronically partial). Fetched bars merge with full stored history
-read back via `store.read_ohlcv` so feature windows + training keep full depth. `--full`
-forces a full re-fetch (e.g. after a split). **Rate-limit resilience:**
-`fetch.download_ohlcv` retries any ticker the threaded batch drops (Yahoo rate limits
-partial batches *without raising*) **individually** — single-ticker requests survive
-rate limiting far better — degrading (skip + stderr warning) only if a ticker is still
-empty after that. The model still trains on the full in-memory series; the win is
-network/latency, not training time.
+`pipeline.fetch_and_store` is the reusable daily-ETL block. **Fetching is incremental
+per ticker** (stored tickers pull only the recent tail newer than `store.latest_date`;
+unstored tickers self-heal a full pull from `START_DATE`; `--full` forces a full
+re-fetch) and **rate-limit-resilient** (a ticker the threaded batch silently drops is
+retried individually, then skipped-with-warning). Fetched bars merge with the full
+stored history read back via `store.read_ohlcv` so feature windows keep full depth. Full
+mechanism + rationale in [docs/architecture.md](docs/architecture.md).
 
 **Database:** 4 tables — `ohlcv_raw`, `daily_market` (Table 1), `sentiment_analyst`
 (Table 2), `cross_asset` (Table 3). Raw OHLCV kept separate from derived features.
@@ -135,93 +128,45 @@ unless changed.
 - **Additive migrations** — `store._migrate` `ALTER TABLE`s the new columns onto
   pre-Phase-2 databases idempotently; no rebuild required.
 
-## 5c. Phase 3 design notes (in progress)
+## 5c. Phase 3 design notes
 
-- **Time-honest dataset** — `generate_dataset` returns rows **sorted by snapshot
-  date** (DatetimeIndex), so `TimeSeriesSplit` CV is valid. `n` is now arbitrary;
-  the Story.md 100k run is `concinvest run --n 100000`.
-- **Honest validation** — `train_validate_split` carves the last
-  `VALIDATION_YEARS` off by calendar date. `run_phase1` trains **only on the
-  pre-validation split**, so the validation-window backtest is true out-of-sample
-  (previously the model saw the backtest window — leakage, now fixed).
-- **Tuning** — `model.tune` / `tune_and_train` pick the best `PARAM_GRID` entry by
-  mean TSCV ROC-AUC; `concinvest run` tunes by default (`--no-tune` to skip), and
-  prints the chosen params. Selected params live on `TrainedModel.params`.
-- **Feature pruning** — `model.select_features` drops features below
-  `MIN_IMPORTANCE` (action encoding always kept); `tune_and_train(prune=True)` refits
-  on the reduced set. `FEATURE_COLS` stays the stable superset callers build;
-  `TrainedModel.features` records the columns actually used.
-- **Exposure mapping** — `backtest._target_name_fraction` holds **each name's**
-  per-name base weight (18% = 12+3+3) while *that name's* buy-confidence is
-  neutral-to-bullish (≥ 0.5, the classifier's natural boundary) and only de-risks it
-  proportionally below 0.5 (per-stock — Story.md's forecast is per ticker). Names are
-  rebalanced independently (`_rebalance_names_to_target`), so a bearish read on one
-  stock trims only that stock; a single-number book-level dial (`_target_exposure`) is
-  retained for the Phase-1 `run_backtest`. Principled (not tuned to the validation
-  year); the drawdown guardrail still handles crashes independently.
-- **Live result (last validation year, `--n 10000`)** — portfolio **+28.8%** vs
-  NASDAQ **+34.9%** under the base-case-faithful mapping (was +15.2% under the old
-  linear-confidence one).
-- **Walk-forward validation** (`concinvest validate`, `backtest.walkforward`) — the
-  single-year read is misleading. Across four trained-then-tested 1-year windows
-  (`--n 10000`, with the Phase 4 crisis path + underlying dividends active):
+Durable decisions below; the full run-by-run experiment log (superseded numbers, dropped
+levers) lives in git history, not here.
 
-  | window | portfolio | NASDAQ | vs |
-  |--------|-----------|--------|----|
-  | 2022-08→2023-07 | +46.9% | +13.1% | **+33.8** |
-  | 2023-07→2024-07 | +27.1% | +31.5% | −4.4 |
-  | 2024-07→2025-07 | +13.7% | +11.3% | **+2.4** |
-  | 2025-07→2026-06 | +29.5% | +28.2% | **+1.3** |
-
-  **Win rate 75% (3/4), mean outperformance +8.3%** (per-stock rebalance). The strategy
-  is high-variance: it crushed the 2022-23 value/commodity rotation. The crisis path
-  (§5d) flipped the former worst window (2024-25) from −20.2% to a win, and the
-  **per-stock confidence rebalance** (each name trimmed by its own forecast, not a
-  basket-mean dial) lifted the win rate from 2/4 to 3/4 and mean outperformance from
-  +5.7% to +8.3% — the worst window's shortfall roughly halved (−11.0 → −4.4). (Numbers
-  vary run-to-run with the synthetic sample.)
-- **Tier-graded de-risking scope** — shedding the riskiest tier first (3x → 2x → stock)
-  is applied to the two Story.md de-risking events — the crash drawdown and the 33%
-  post-upstreak trim — and is **performance-neutral** there (75%/+8.3% unchanged).
-  Applying it to the *routine* confidence-rebalance instead cost ~5pp (fell to 50%/+3.3%)
-  by de-levering in up-markets, so that path stays pro-rata — consistent with the
-  earlier Lever-1 lesson (this basket's edge is its leverage in up-markets).
-- **Risk-lever experiment** — two levers were evaluated to make the win more robust.
-  **Lever 2 (leverage-aware de-risk)** — drawdown de-risk now sells the riskiest tier
-  first (3x → 2x → stock) via `state.sell_tier`, keeping the Story.md 10%/name/day cap;
-  it shipped (mean **+5.5%**, ≈ neutral, better risk hygiene). **Lever 1 (vol-aware
-  leverage throttle)** — shedding 2x/3x when VIX is elevated — was **dropped**: the
-  walk-forward showed it cut the strategy's leverage edge and fought the crisis dip-buy
-  (mean fell to +3.5% at a VIX-28 stress threshold, +2.9% at VIX-20). Lesson: this
-  basket's edge *is* the leverage in up-markets; de-levering on vol is net-negative.
-- **Closed** — "beat NASDAQ" is now a **75% win rate, mean +8.2%** across the
-  walk-forward (up from the marginal 50%/+5.7% under the basket-mean dial), accepted as
-  the Phase 3 outcome. Still high-variance (one window trails ~4pp). The honest remaining
-  lever is a **basket/benchmark review** (concentrated value vs a tech-heavy NASDAQ) —
-  not more risk tuning — deferred (revisit if a stronger edge is wanted).
-- **Rule/base-case update (current)** — added guardrails **underlying ≥ 2x+3x**
-  (`enforce_underlying_dominance`) and a **6% per-name floor / cash < 70%**
-  (`MIN_NAME_WEIGHT`/`MAX_CASH`); the per-name de-risk floor binds even in a drawdown
-  (book ≥ 30% invested at all times). The base case was re-tilted to **9%/4.5%/4.5%**
-  (was 12%/3%/3%) — same 18%/name but more leverage. Net walk-forward improved to
-  **75% (3/4), mean +11.2%** (the 9%==9% start sits on the dominance boundary so the
-  trim fires often, but the heavier base leverage more than offsets it — the basket's
-  edge is leverage in up-markets, §5c Lever-1). Numbers vary run-to-run with the
-  synthetic sample.
-- **Momentum lags (current)** — each technical + cross-asset feature is now also carried
-  at `_lag{3,10,30,100}` (its value that many trading days back), so the trees see recent
-  trajectory rather than only the point-in-time level. Lags are strictly past data (no
-  leakage); the leading edge fills to 0. **Prune fix:** adding 52 lag columns diluted
-  every RF importance below the absolute `MIN_IMPORTANCE` (0.02), so `select_features`
-  collapsed the model to the action encoding only (`is_sell`/`leverage`) — a degenerate
-  forecaster (a constant per-name confidence → just the leveraged base case). The cutoff
-  now scales with feature count (`min(MIN_IMPORTANCE, KEEP_UNIFORM_FRAC / n)`), keeping
-  67/69 features; the lags rank **among the top signals** (`sma50_sma200_ratio_lag100`,
-  `price_sma200_ratio_lag100`, `yield_10y_lag3`). With the model genuinely using them,
-  CV ROC-AUC ≈ 0.562 and the walk-forward is **75% (3/4), mean +11.7%** — i.e. ≈ neutral
-  vs the +11.6% before lags (the strategy already captured most of that signal; the
-  earlier "+14.6%" was the degenerate-model artifact, not the lags). Net: lags are
-  informative but aggregate-neutral; the durable fix is the count-scaled prune.
+- **Time-honest dataset** — `generate_dataset` returns rows sorted by snapshot date, so
+  `TimeSeriesSplit` CV is valid; `n` is arbitrary (Story.md 100k = `concinvest run --n 100000`).
+- **Honest validation** — `train_validate_split` carves the last `VALIDATION_YEARS` off by
+  calendar date; `run_phase1` trains **only on the pre-validation split**, so the
+  validation-window backtest is true out-of-sample.
+- **Tuning** — `model.tune` / `tune_and_train` pick the best `PARAM_GRID` entry by mean TSCV
+  ROC-AUC (`concinvest run` tunes by default; `--no-tune` to skip; params on `TrainedModel.params`).
+- **Feature pruning** — `select_features` drops features below a cutoff that **scales with
+  feature count** (`min(MIN_IMPORTANCE, KEEP_UNIFORM_FRAC / n)`, action encoding always kept).
+  The absolute floor alone let the 52 momentum-lag columns dilute every importance and
+  collapse the model to the action encoding — a degenerate constant-confidence forecaster;
+  the count-scaled cutoff keeps ~67/69 features. `TrainedModel.features` records what's used.
+- **Exposure mapping** — `_target_name_fraction` holds each name's per-name base weight while
+  that name's buy-confidence is ≥ 0.5 and de-risks only below 0.5; names rebalance
+  independently (`_rebalance_names_to_target`), so a bearish read on one stock trims only that
+  stock (Story.md's per-ticker forecast). The routine confidence-rebalance sells **pro-rata**
+  across tiers — tier-grading it cost ~5pp by de-levering in up-markets. Tier-graded
+  (riskiest-first) de-risk is reserved for the two Story.md de-risking events (crash drawdown,
+  33% trim), where it is performance-neutral.
+- **Base case** — re-tilted to **9%/4.5%/4.5%** per name (same 18%/name, more leverage than
+  the old 12/3/3), with guardrails **underlying ≥ 2x+3x** (`enforce_underlying_dominance`) and
+  a **6% per-name floor / cash < 70%** (`MIN_NAME_WEIGHT`/`MAX_CASH`; book ≥ 30% invested at
+  all times, even in a drawdown).
+- **Momentum lags** — each technical + cross-asset feature is also carried at
+  `_lag{3,10,30,100}` (strictly past data, leading edge → 0); they rank among the top signals.
+- **Risk-lever outcome** — Lever 2 (leverage-aware riskiest-first de-risk, `state.sell_tier`)
+  shipped; **Lever 1 (vol-aware leverage throttle) was dropped** — de-levering on high VIX cut
+  the leverage edge and fought the crisis dip-buy. **Lesson: this basket's edge *is* leverage
+  in up-markets** — de-levering on vol is net-negative.
+- **Current headline** (walk-forward, `concinvest validate --n 10000`): **≈ 75% win rate (3/4),
+  mean outperformance ≈ +11%** vs NASDAQ; high-variance (one window trails ~4pp). **Numbers
+  vary run-to-run with the synthetic sample — indicative, not exact.** The remaining real lever
+  is a **basket/benchmark review** (concentrated value vs a tech-heavy NASDAQ), not more risk
+  tuning — deferred.
 
 ## 5d. Phase 4 design notes (in progress)
 
@@ -283,31 +228,17 @@ unless changed.
   button**. Markers are drawn on the decision day (T-1, the signal bar), display-only. The
   asset selector also offers **Cash** as a 6th option — cash (€) over NASDAQ on a shared
   x-axis, from `cash_curve`.
-- **Live: Sample Portfolio tab** (first tab) — a **persisted, selectable** user book. A
-  dropdown lists saved portfolios from `data.portfolio_store` (named CSV **files** under
-  `data/portfolios/`, one row per position + a cash row; or "New portfolio"); a 15-row
-  grid holds the € **invested** and a **separate buy date for each position** (stock / 2x /
-  3x of each stock; buy dates default to **today** so a fresh book starts at current ≈
-  invested), plus cash; **💾 Save / update** persists it to the chosen file.
-  `pipeline.build_dated_book` derives each lot's **current value** by the daily-rebalanced
-  Nx-leverage path (`_lot_value_path`: cumprod of `1 + tier × underlying-daily-return` since
-  the buy date — a real leveraged ETF, matching the backtest's `state.mark`; daily factor
-  floored at 0), keeps the real **cost
-  basis**, and computes the book's **high-water** (peak of the marked book path, **always ≥
-  current** so drawdown can't go negative — incl. lots bought past their last close) — shown
-  as invested / current / drawdown metrics + a **Plotly pie** of current value per position
-  next to a **performance-since-inception vs NASDAQ** line chart (`dated_book_value_path`
-  gives the daily combined book €-value; both rebased to 0 at the earliest buy date —
-  portfolio in the app's dark green, NASDAQ dark red, the convention for all NASDAQ plots).
-  A **Run live
-  analysis** button calls `pipeline.recommend_for_portfolio`, which (reusing the already-
-  trained model) fetches live news/sentiment, sizes the 5-field forecast to that book
-  (`apply_book_limits`: buys ≤ cash, sells ≤ held), applies the sentiment overlay, and adds
-  the chosen strategy's deterministic, **value/cost-aware** actions (`_strategy_actions`,
-  on a deep copy → side-effect-free): default → `rules.apply_guardrails` (the 20% drawdown
-  de-risk now fires off the derived high-water, plus dominance + 33% trim); aggressive →
-  the real lot-level **−60% stop-loss** + **+60% take-profit** skim + 33% cap (these need
-  the derived cost basis). The other three tabs are the ML views, prefixed **ML:**.
+- **Live: Sample Portfolio tab** (first tab) — a persisted, selectable user book (named CSV
+  files under `data/portfolios/`, one row per position + a cash row; each lot its own buy date,
+  defaulting to today). `pipeline.build_dated_book` derives each lot's current value via the
+  daily-rebalanced Nx-leverage path (`_lot_value_path`, matching the backtest's `state.mark`),
+  the real cost basis, and a high-water ≥ current (drawdown ≥ 0). **Run live analysis** calls
+  `pipeline.recommend_for_portfolio` (reusing the trained model, side-effect-free on a deep
+  copy): live news/sentiment → 5-field forecast sized to the book (`apply_book_limits`) +
+  sentiment overlay + the strategy's value/cost-aware actions (`_strategy_actions`; default:
+  drawdown de-risk / dominance / 33% trim; aggressive: −60% stop-loss / +60% take-profit /
+  33% cap). Full UI/chart detail in [docs/architecture.md](docs/architecture.md); the other
+  three tabs are the ML views (prefixed **ML:**).
 - **Live sentiment overlay** (`ml/overlay.py`) — tilts the **live** 5-field forecast by
   the analyst signals: `sentiment_tilt` (recommendation mean + EPS-revision momentum +
   price-vs-target) scales confidence/amount, `risk_gate` (put/call + IV skew) caps the
@@ -326,7 +257,7 @@ unless changed.
 
 ```bash
 uv sync --extra dev
-uv run pytest                                   # 103 tests, offline (synthetic fixtures)
+uv run pytest                                   # offline (synthetic fixtures)
 uv run concinvest run --n 4000                  # live: fetch→model→forecast→backtest
 uv run concinvest run --n 4000 --strategy aggressive   # the all-3x book (default: balanced)
 uv run concinvest validate --n 10000            # walk-forward (multi-window) vs NASDAQ
@@ -387,10 +318,9 @@ in WAL mode so the app reads while the cron writes.
   pruning, base-case-faithful exposure mapping, walk-forward validation
   (`concinvest validate`), risk-control tightening (Lever 2 riskiest-first de-risk
   shipped; Lever 1 vol throttle evaluated and dropped — §5c), and **per-stock
-  confidence rebalancing** (each name trimmed by its own forecast). Walk-forward
-  **win rate 75% (3/4), mean +8.2%**, up from 50%/+5.7% under the old basket-mean dial.
-  Still high-variance (one window ~−4pp). The remaining real lever is a
-  **basket/benchmark review** (not more risk tuning), deferred to a future revisit.
+  confidence rebalancing** (each name trimmed by its own forecast). Current walk-forward
+  headline is in **§5c** (single source of truth — not restated here). The remaining real
+  lever is a **basket/benchmark review** (not more risk tuning), deferred to a future revisit.
 - **Phase 4** (✅) — `portfolio/` `state.py` (leveraged lots + cash + tier-targeted
   `sell_tier`), `tax.py` (25% flat + loss offset), `rules.py` (90/10 base, 33%→trim 3%,
   underlying≥2x+3x, <10%/day sell, 20% drawdown→riskiest-tier-first de-risk to a 6%

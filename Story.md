@@ -1,5 +1,12 @@
 # Building a Yahoo Finance ML Portfolio Forecasting Database: A Deep Dive
 
+> **For coding agents:** the load-bearing spec is **§ Basic idea** below (portfolio
+> rules + tech targets) — read that. The rest of this document is the original research
+> blueprint (recommended tickers, the full `yfinance` data catalog, feature ideas) —
+> **background reference, not per-task instruction**. For current implementation state
+> see [IMPLEMENTATION.md](IMPLEMENTATION.md). This file is intentionally *not*
+> auto-loaded into context; open it on demand.
+
 ## Executive Summary
 
 This report provides a comprehensive blueprint for building a daily-updated database using Yahoo Finance data mainly via the `yfinance` Python library to power a machine learning–based portfolio recommendation system. It covers the optimal selection of global indices, commodities, macro indicators, and sentiment proxies — all accessible through Yahoo Finance ticker symbols. The report also maps out all available data types from `yfinance` that serve as trend-setting features for short-term, mid-term, and long-term forecasting, including derived features like moving averages and quotients.

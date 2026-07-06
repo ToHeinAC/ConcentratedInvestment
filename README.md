@@ -10,9 +10,11 @@ validated on the held-out final year.
 See [`Story.md`](./Story.md) for the domain spec and [`IMPLEMENTATION.md`](./IMPLEMENTATION.md)
 for the phased build plan.
 
-> **Status: Phase 1 (thin end-to-end slice).** Live pipeline: fetch core tickers → SQLite →
+> **Status: Phases 1–4 done; Phase 5 in progress** (daily cron + dated sentiment snapshot +
+> rising-market regime badge done; Docker deploy remaining). Live pipeline: fetch → SQLite →
 > technical + cross-asset + sentiment features → synthetic dataset → RandomForest → 5-field
-> forecast → backtest vs. NASDAQ → Streamlit UI. Beating the benchmark is the Phase 3 tuning goal.
+> forecast → guardrailed backtest vs. NASDAQ → Streamlit UI. See
+> [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) for the authoritative phase table.
 
 ---
 
@@ -96,7 +98,7 @@ kill "$(pgrep -f 'streamlit run.*concinvest')"
 ```
 src/concinvest/
 ├── config.py          # paths, dates, portfolio/risk constants, port 8505
-├── cli.py             # `concinvest {info,update,run}`
+├── cli.py             # `concinvest {info,update,run,notify,validate}`
 ├── pipeline.py        # run_phase1 / fetch_and_store orchestration
 ├── data/              # tickers.py (universe) · fetch.py (yfinance) · store.py (SQLite)
 ├── features/          # technical · cross_asset · sentiment (VADER) · analyst · options
@@ -104,7 +106,7 @@ src/concinvest/
 ├── backtest/          # engine: model-timed portfolio vs. NASDAQ
 ├── portfolio/         # state · rules · tax (German)                     [Phase 4]
 └── app/               # streamlit_app.py · exit_button.py
-tests/                 # pytest (20 tests, offline synthetic fixtures)
+tests/                 # pytest (offline synthetic fixtures)
 docs/                  # architecture.md · SCHEMA.md
 ```
 
@@ -127,10 +129,10 @@ vertical slice.
 |-------|-------|
 | **0** | Scaffold — package, config, tickers, CLI, tests, Docker, exit button *(done)* |
 | **1** | Thin end-to-end slice: fetch → SQLite → features (incl. baseline sentiment) → RandomForest → forecast → backtest → UI *(done)* |
-| **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum |
+| **2** | Deepen data & features: full universe, FinBERT + German-news scraping, options IV skew, analyst revision momentum *(done)* |
 | **3** | Full 100k-datapoint synthetic dataset, TimeSeriesSplit CV, feature importance, tuning *(done)* |
 | **4** | Full rules engine + German tax, integrated into the backtest *(done)* |
-| **5** | UI polish (correlation matrix, regime detection), daily cron, Docker deploy *(cron + sentiment snapshot done)* |
+| **5** | UI polish (correlation matrix, regime detection), daily cron, Docker deploy *(cron + sentiment snapshot + regime badge done; Docker deploy remaining)* |
 
 See [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) for details.
 
