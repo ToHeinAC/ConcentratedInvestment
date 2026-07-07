@@ -486,10 +486,11 @@ def test_recommend_for_portfolio_user_book(synth_market, synth_raw):
                pstate.Lot(names[0], 3, 20_000.0, 20_000.0),
                pstate.Lot(names[1], 1, 15_000.0, 15_000.0)]
     before = st.total_value()
-    fcs, sent, guard = pipeline.recommend_for_portfolio(
+    fcs, sent, guard, headlines = pipeline.recommend_for_portfolio(
         st, trained, panel, synth_market, with_sentiment=False
     )
     assert sent.empty  # sentiment disabled -> no live fetch
+    assert headlines == {}  # sentiment disabled -> no news records
     assert isinstance(fcs, list)
     # The over-cap name is trimmed, riskiest tier first; side-effect-free on the input.
     assert any(t.ticker == names[0] and t.action == "sell" for t in guard)

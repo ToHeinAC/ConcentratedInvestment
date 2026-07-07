@@ -130,20 +130,51 @@ def fetch_recommendation_mean(ticker: str) -> float | None:
         return None
 
 
-def fetch_news_headlines(ticker: str, count: int = 10) -> list[str]:
-    """Recent news headlines for ``ticker`` (best effort, may be empty)."""
+def fetch_news_items(ticker: str, count: int = 10) -> list[dict]:
+    """Recent news items for ``ticker`` as ``{title, link, published}`` dicts (best effort).
+
+    Tolerates both yfinance news schemas (flat and the newer ``content``-nested one);
+    ``link``/``published`` are ``None`` when the field is absent or unparseable.
+    """
     try:
         news = yf.Ticker(ticker).get_news(count=count)
         time.sleep(_META_DELAY)
     except Exception:  # noqa: BLE001
         return []
-    headlines: list[str] = []
+    items: list[dict] = []
     for item in news or []:
-        # yfinance news schema varies; try common shapes.
-        title = item.get("title") or item.get("content", {}).get("title")
-        if title:
-            headlines.append(str(title))
-    return headlines
+        content = item.get("content") or {}
+        title = item.get("title") or content.get("title")
+        if not title:
+            continue
+        link = (item.get("link")
+                or (content.get("canonicalUrl") or {}).get("url")
+                or (content.get("clickThroughUrl") or {}).get("url"))
+        items.append({"title": str(title), "link": link,
+                      "published": _parse_news_time(item, content)})
+    return items
+
+
+def _parse_news_time(item: dict, content: dict) -> _dt.datetime | None:
+    """Best-effort publish datetime from either yfinance news schema."""
+    epoch = item.get("providerPublishTime")
+    if epoch is not None:
+        try:
+            return _dt.datetime.fromtimestamp(float(epoch), tz=_dt.timezone.utc)
+        except (TypeError, ValueError, OSError):
+            return None
+    iso = content.get("pubDate") or content.get("displayTime")
+    if iso:
+        try:
+            return _dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
+def fetch_news_headlines(ticker: str, count: int = 10) -> list[str]:
+    """Recent news headlines for ``ticker`` (best effort, may be empty)."""
+    return [i["title"] for i in fetch_news_items(ticker, count=count)]
 
 
 def fetch_put_call_ratio(ticker: str) -> float | None:
@@ -221,9 +252,14 @@ def _iv_at(opts: pd.DataFrame, strike: float) -> float | None:
     return float(iv) if iv is not None and not pd.isna(iv) else None
 
 
-def fetch_german_headlines(query: str, max_items: int = 10) -> list[str]:
-    """Scrape recent German-language headlines for ``query`` (best effort)."""
-    url = "https://www.finanznachrichten.de/suche/uebersicht.htm"
+_FN_BASE = "https://www.finanznachrichten.de"
+
+
+def fetch_german_news_items(query: str, max_items: int = 10) -> list[dict]:
+    """Scrape recent German-language news items for ``query`` as ``{title, link,
+    published}`` dicts (best effort). ``published`` is always ``None`` — the search
+    listing carries no reliable per-article date."""
+    url = f"{_FN_BASE}/suche/uebersicht.htm"
     try:
         resp = requests.get(
             url, params={"suche": query},
@@ -232,21 +268,36 @@ def fetch_german_headlines(query: str, max_items: int = 10) -> list[str]:
         time.sleep(_META_DELAY)
         if resp.status_code != 200:
             return []
-        return _parse_finanznachrichten(resp.text, max_items)
+        return _parse_finanznachrichten_items(resp.text, max_items)
     except Exception:  # noqa: BLE001
         return []
 
 
-def _parse_finanznachrichten(html: str, max_items: int = 10) -> list[str]:
-    """Extract article headlines from a finanznachrichten.de search page."""
+def fetch_german_headlines(query: str, max_items: int = 10) -> list[str]:
+    """Scrape recent German-language headlines for ``query`` (best effort)."""
+    return [i["title"] for i in fetch_german_news_items(query, max_items=max_items)]
+
+
+def _parse_finanznachrichten_items(html: str, max_items: int = 10) -> list[dict]:
+    """Extract ``{title, link, published}`` items from a finanznachrichten.de search page.
+
+    ``published`` is ``None`` (the listing exposes no reliable per-article date); relative
+    hrefs are resolved against the site root."""
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
-    seen: dict[str, None] = {}
+    seen: dict[str, dict] = {}
     for a in soup.select("a.news-headline, a[href*='/nachrichten-']"):
         title = a.get_text(strip=True)
-        if len(title) > 15:
-            seen.setdefault(title, None)
+        if len(title) > 15 and title not in seen:
+            href = a.get("href") or ""
+            link = href if href.startswith("http") else (f"{_FN_BASE}{href}" if href else None)
+            seen[title] = {"title": title, "link": link, "published": None}
         if len(seen) >= max_items:
             break
-    return list(seen)
+    return list(seen.values())
+
+
+def _parse_finanznachrichten(html: str, max_items: int = 10) -> list[str]:
+    """Extract article headlines from a finanznachrichten.de search page."""
+    return [i["title"] for i in _parse_finanznachrichten_items(html, max_items)]

@@ -15,19 +15,20 @@ from concinvest import pipeline
 from concinvest.data import store
 
 
-def _fake_sentiment_row(ticker: str, as_of=None) -> pd.DataFrame:
-    return pd.DataFrame([{
+def _fake_sentiment(ticker: str, as_of=None) -> tuple[pd.DataFrame, list]:
+    row = pd.DataFrame([{
         "date": as_of, "ticker": ticker,
         "recommendation_mean": 2.0, "news_sentiment_score": 0.5,
         "put_call_ratio": 1.0, "eps_revision_up_7d": 1, "eps_revision_down_7d": 0,
         "analyst_target_mean": 100.0, "iv_skew": 0.0,
     }])
+    return row, []
 
 
 def test_daily_etl_accumulates_sentiment_history(tmp_path, synth_raw, monkeypatch):
     db = tmp_path / "etl.sqlite"
     monkeypatch.setattr(pipeline.fetch, "download_ohlcv", lambda *a, **k: synth_raw)
-    monkeypatch.setattr(pipeline.analyst, "build_sentiment_row", _fake_sentiment_row)
+    monkeypatch.setattr(pipeline.analyst, "build_sentiment", _fake_sentiment)
 
     s1 = pipeline.daily_etl(as_of=dt.date(2025, 6, 1), db_path=db)
     s2 = pipeline.daily_etl(as_of=dt.date(2025, 6, 2), db_path=db)

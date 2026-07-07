@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
                          tune=args.tune, strategy=args.strategy)
         positions, cash = load_portfolio(args.portfolio)
         state = build_dated_book(positions, res.market, cash)
-        fcs, _sent, actions = recommend_for_portfolio(
+        fcs, _sent, actions, _headlines = recommend_for_portfolio(
             state, res.model, res.panel, res.market, strategy=args.strategy)
         alert = notify.build_alert(fcs, actions, portfolio_name=args.portfolio,
                                    strategy=args.strategy)

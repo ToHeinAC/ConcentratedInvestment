@@ -251,6 +251,17 @@ levers) lives in git history, not here.
   held in that name's tier** (Story.md: buy only with cash on hand, sell only from open
   positions), dropping unfundable actions. (The backtest already enforced cash via
   `state.buy`; this brings the displayed 5-field forecast in line.)
+- **Per-article headline expander** — under the Analyst & sentiment chart (both the ML:
+  Current market and Live tabs), a collapsed-by-default `st.expander` per user-selected
+  stock lists the **top-3 most-positive and most-negative** recent articles (caption →
+  clickable source link + signed score). The fetch/score path now **retains** per-article
+  records: `fetch.fetch_news_items` / `fetch_german_news_items` keep title + link (+ date
+  for yfinance), `sentiment.score_texts` scores each headline, and
+  `analyst.build_sentiment` returns `(row, records)` — the row's aggregate
+  `news_sentiment_score` is unchanged (mean over all fetched), records are the display
+  subset (yfinance filtered to 7 days; undated German items kept). Threaded through
+  `pipeline._fetch_sentiment` → `Phase1Result.sentiment_headlines` and the
+  `recommend_for_portfolio` 4-tuple (`… , sentiment_headlines`). Display-only.
 - **Open** — basket/benchmark review (the real outperformance lever, §5c).
 
 ## 6. Run & verify
@@ -282,7 +293,10 @@ in WAL mode so the app reads while the cron writes.
   sentiment scaling, SQLite upsert/read roundtrip, `latest_date`/`read_ohlcv` helpers +
   incremental `fetch_and_store` (tail-only second fetch, `--full` force, partial-DB
   self-heal, merged full-depth history), additive schema migration, pure
-  fetch helpers (IV nearest-strike, finanznachrichten headline parse), dataset
+  fetch helpers (IV nearest-strike, finanznachrichten headline parse, news-item
+  link/date extraction across both yfinance schemas), per-headline `score_texts`
+  (mean == `score_headlines`), `analyst.build_sentiment` (row + scored records: 7-day
+  yfinance filter, undated German kept, aggregate over all fetched), dataset
   shape/balance/no-leakage + chronological order + date split, TSCV tuning, model
   train + 5-field forecast, backtest curve, portfolio state/tax/guardrails (incl.
   tier-targeted `sell_tier` + riskiest-first de-risk) + rules-based & forecast-driven

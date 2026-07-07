@@ -108,6 +108,7 @@ def _load(n_dataset: int, with_sentiment: bool, strategy: str, _progress=None):
         "correlation": res.correlation,
         "regime": getattr(res, "regime", None),  # rising-market badge
         "sentiment": res.sentiment,
+        "sentiment_headlines": getattr(res, "sentiment_headlines", {}),
         "market": res.market,
         "nasdaq": res.nasdaq,
         "trades": _trades_to_frame(res.backtest.trades),
@@ -430,7 +431,7 @@ def _render_live(data: dict) -> None:
         with st.spinner("Fetching live news/sentiment and scoring your book…"):
             from concinvest.pipeline import recommend_for_portfolio
 
-            fcs, sent, actions = recommend_for_portfolio(
+            fcs, sent, actions, headlines = recommend_for_portfolio(
                 state, data["model"], data["panel"], market,
                 strategy=data.get("strategy", "default"), with_sentiment=True,
             )
@@ -438,6 +439,7 @@ def _render_live(data: dict) -> None:
                 "forecasts": forecasts_to_frame(fcs),
                 "guard": _guard_to_frame(actions),
                 "sentiment": sent,
+                "sentiment_headlines": headlines,
             }
 
     reco = st.session_state.get("live_reco")
@@ -479,6 +481,7 @@ def _render_live(data: dict) -> None:
         st.caption("Best above-threshold action per stock, sized to your book (buys capped "
                    "at cash, sells at the position held) and tilted by live news/sentiment.")
     _render_sentiment(reco["sentiment"], data.get("market", {}), key="sentiment_upside_live")
+    _render_headline_expander(reco.get("sentiment_headlines", {}), key="headlines_live")
 
 
 def _render_current(data: dict) -> None:
@@ -518,6 +521,7 @@ def _render_current(data: dict) -> None:
     _render_regime(data.get("regime"))
     _render_correlation(data["correlation"])
     _render_sentiment(data.get("sentiment"), data.get("market", {}))
+    _render_headline_expander(data.get("sentiment_headlines", {}), key="headlines_current")
 
 
 _REGIME_COLOR = {"Rising": "#234637", "Neutral": "#9e9e9e", "Falling": "#c62828"}
@@ -707,6 +711,35 @@ def _render_sentiment(sent, market: dict, key: str = "sentiment_upside") -> None
                "rating (red Sell → green Buy) · ▲/■/▼ = news-headline tone · "
                "⊘ = no analyst target returned this fetch. Live "
                "signals (display only; no history to train on yet).")
+
+
+def _render_headline_expander(headlines: dict, key: str) -> None:
+    """Collapsed per-stock expander of the most positive / negative recent articles."""
+    present = [t for t in headlines if headlines.get(t)]
+    if not present:
+        return
+    label = {t: tickers.NAMES.get(t, t) for t in present}
+    choice = st.selectbox("News detail — pick a stock", present,
+                          format_func=lambda t: label[t], key=f"{key}_select")
+    records = headlines.get(choice, [])
+    pos = [r for r in records if r["score"] > 0][:3]
+    neg = sorted((r for r in records if r["score"] < 0), key=lambda r: r["score"])[:3]
+    with st.expander(f"News headlines — {label[choice]}", expanded=False):
+        _render_headline_list("Most positive", pos)
+        _render_headline_list("Most negative", neg)
+        if not pos and not neg:
+            st.caption("No scored headlines in the last 7 days.")
+
+
+def _render_headline_list(title: str, records: list[dict]) -> None:
+    """Render one labelled block of ``[caption](link) · score`` markdown lines."""
+    if not records:
+        return
+    st.caption(title)
+    for r in records:
+        date = f" · {r['published'].date()}" if r.get("published") else ""
+        head = f"[{r['title']}]({r['link']})" if r.get("link") else r["title"]
+        st.markdown(f"- {head} · **{r['score']:+.1f}**{date}")
 
 
 def _render_forecast(data: dict) -> None:

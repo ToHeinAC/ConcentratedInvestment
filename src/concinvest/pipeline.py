@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import datetime as _dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -37,6 +37,8 @@ class Phase1Result:
     nasdaq: pd.Series  # raw NASDAQ close (for the Strategy tab)
     panel: pd.DataFrame  # (date, ticker) feature panel (reused by the Live tab)
     regime: Regime | None = None  # rising-market badge (None if ^GSPC/^VIX absent)
+    # Per-ticker scored news records for the UI headline expander (empty if disabled).
+    sentiment_headlines: dict[str, list[dict]] = field(default_factory=dict)
 
 
 # Re-pull this many days of already-stored bars on an incremental fetch: yfinance
@@ -124,14 +126,19 @@ def fetch_and_store(
 
 def _fetch_sentiment(
     stocks: list[str], as_of: _dt.date | None = None, db_path=None
-) -> pd.DataFrame:
-    """Fetch live analyst/sentiment rows for ``stocks`` (dated ``as_of``) and persist."""
-    rows = [analyst.build_sentiment_row(t, as_of=as_of) for t in stocks]
+) -> tuple[pd.DataFrame, dict[str, list[dict]]]:
+    """Fetch live analyst/sentiment rows for ``stocks`` (dated ``as_of``), persist them,
+    and return the frame plus per-ticker scored news records (for the UI expander)."""
+    rows, headlines = [], {}
+    for t in stocks:
+        row, records = analyst.build_sentiment(t, as_of=as_of)
+        rows.append(row)
+        headlines[t] = records
     frame = pd.concat(rows, ignore_index=True)
     conn = store.connect(db_path)
     store.upsert(conn, "sentiment_analyst", frame)
     conn.close()
-    return frame
+    return frame, headlines
 
 
 def daily_etl(
@@ -151,7 +158,7 @@ def daily_etl(
     )
     sentiment_rows = 0
     if with_sentiment:
-        sent = _fetch_sentiment(list(market), as_of=as_of, db_path=db_path)
+        sent, _ = _fetch_sentiment(list(market), as_of=as_of, db_path=db_path)
         sentiment_rows = len(sent)
     return {
         "as_of": str(as_of or _dt.date.today()),
@@ -250,8 +257,8 @@ def run_phase1(
     # overlay tilts the live forecast only (these signals have no history to backtest);
     # apply_book_limits then caps buys at cash and sells at the held tier (Story.md).
     _tick(0.85, "Live sentiment & forecast…")
-    sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
-                    if with_sentiment else pd.DataFrame())
+    sentiment_df, headlines = (_fetch_sentiment(list(market), db_path=db_path)
+                               if with_sentiment else (pd.DataFrame(), {}))
     snaps = _live_snapshots(panel, sentiment_df)
     book_value = bt.final_state.total_value() if bt.final_state else config.INITIAL_CAPITAL_EUR
     leverages = (3,) if strategy == "aggressive" else config.LEVERAGE_TIERS
@@ -274,6 +281,7 @@ def run_phase1(
         market=market, cross=cross, model=trained,
         forecasts=forecasts, backtest=bt, correlation=corr,
         sentiment=sentiment_df, nasdaq=nasdaq, panel=panel, regime=reg,
+        sentiment_headlines=headlines,
     )
 
 
@@ -404,7 +412,7 @@ def recommend_for_portfolio(
     strategy: str = "default",
     with_sentiment: bool = True,
     db_path=None,
-) -> tuple[list[Forecast], pd.DataFrame, list]:
+) -> tuple[list[Forecast], pd.DataFrame, list, dict[str, list[dict]]]:
     """Live action recommendations for a **user-supplied** book under ``strategy``.
 
     Reuses an already-trained model (no retraining): fetches live analyst/sentiment,
@@ -412,11 +420,11 @@ def recommend_for_portfolio(
     book (cash on hand / open positions), tilts it by the sentiment overlay, and adds the
     strategy's deterministic value/cost-aware actions (`_strategy_actions`). Side-effect-
     free — the actions run on a copy of ``state``. Returns
-    ``(forecasts, sentiment_df, action_trades)``."""
+    ``(forecasts, sentiment_df, action_trades, sentiment_headlines)``."""
     import copy
 
-    sentiment_df = (_fetch_sentiment(list(market), db_path=db_path)
-                    if with_sentiment else pd.DataFrame())
+    sentiment_df, headlines = (_fetch_sentiment(list(market), db_path=db_path)
+                               if with_sentiment else (pd.DataFrame(), {}))
     snaps = _live_snapshots(panel, sentiment_df)
     latest_close = {t: float(df["close"].iloc[-1]) for t, df in market.items()}
     leverages = (3,) if strategy == "aggressive" else config.LEVERAGE_TIERS
@@ -426,7 +434,7 @@ def recommend_for_portfolio(
     cash, held = _book_cash_held(state)
     fcs = forecast.apply_book_limits(fcs, cash, held)
     actions = _strategy_actions(copy.deepcopy(state), trained, panel, strategy)
-    return fcs, sentiment_df, actions
+    return fcs, sentiment_df, actions, headlines
 
 
 def _nasdaq_series(raw: dict, market: dict) -> pd.Series:

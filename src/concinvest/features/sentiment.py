@@ -56,28 +56,31 @@ def _get_finbert():
     return _finbert
 
 
-def _score_finbert(headlines: list[str]) -> float:
-    """Mean signed FinBERT sentiment (P(pos) - P(neg)) scaled to [-3, 3]."""
+def _score_finbert_each(headlines: list[str]) -> list[float]:
+    """Per-headline signed FinBERT sentiment (P(pos) - P(neg)) scaled to [-3, 3]."""
     clf = _get_finbert()
-    signed = []
+    out = []
     for result in clf(headlines):
         scores = {d["label"].lower(): d["score"] for d in result}
-        signed.append(scores.get("positive", 0.0) - scores.get("negative", 0.0))
-    return 3.0 * (sum(signed) / len(signed)) if signed else 0.0
+        out.append(3.0 * (scores.get("positive", 0.0) - scores.get("negative", 0.0)))
+    return out
 
 
-def score_headlines(headlines: list[str], model: str | None = None) -> float:
-    """Mean sentiment of ``headlines`` scaled to [-3, 3]; 0.0 if empty.
+def score_texts(headlines: list[str], model: str | None = None) -> list[float]:
+    """Per-headline sentiment on the [-3, 3] scale; empty list if no headlines.
 
     ``model`` selects the backend ("vader" / "finbert"); defaults to
     ``config.SENTIMENT_MODEL``.
     """
     if not headlines:
-        return 0.0
+        return []
     if (model or config.SENTIMENT_MODEL).lower() == "finbert":
-        return _score_finbert(headlines)
+        return _score_finbert_each(headlines)
     analyzer = _get_analyzer()
-    compounds = [analyzer.polarity_scores(h)["compound"] for h in headlines]
-    if not compounds:
-        return 0.0
-    return 3.0 * (sum(compounds) / len(compounds))
+    return [3.0 * analyzer.polarity_scores(h)["compound"] for h in headlines]
+
+
+def score_headlines(headlines: list[str], model: str | None = None) -> float:
+    """Mean sentiment of ``headlines`` scaled to [-3, 3]; 0.0 if empty."""
+    scores = score_texts(headlines, model=model)
+    return sum(scores) / len(scores) if scores else 0.0

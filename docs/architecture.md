@@ -62,11 +62,15 @@ after a split rescales deep history) forces a full re-fetch of everything.
   omitting tickers (no exception), so partial results are not accepted; a ticker still
   empty after its individual retry is skipped (degrade, not fail) and logged to stderr.
   Per-ticker
-  `fetch_recommendation_mean()`, `fetch_news_headlines()`, `fetch_put_call_ratio()`,
+  `fetch_recommendation_mean()`, `fetch_news_items()`, `fetch_put_call_ratio()`,
   `fetch_eps_revisions()`, `fetch_analyst_target_mean()`, `fetch_iv_skew()` carry a
-  `_META_DELAY` (0.5s) pause and degrade to `None`/`[]` on error.
-  `fetch_german_headlines()` scrapes `finanznachrichten.de` (best-effort, pure parse
-  in `_parse_finanznachrichten`); `_iv_at` picks the nearest-strike implied vol.
+  `_META_DELAY` (0.5s) pause and degrade to `None`/`[]` on error. `fetch_news_items()`
+  returns `{title, link, published}` dicts (tolerating both yfinance news schemas);
+  `fetch_news_headlines()` is the title-only wrapper over it.
+  `fetch_german_news_items()` scrapes `finanznachrichten.de` (best-effort, pure parse
+  in `_parse_finanznachrichten_items` — title + resolved link, no date;
+  `fetch_german_headlines()`/`_parse_finanznachrichten` are title-only wrappers);
+  `_iv_at` picks the nearest-strike implied vol.
 - **`store.py`** — SQLite. `connect()` creates the schema and runs `_migrate()`
   (additive `ALTER TABLE`s from `_MIGRATIONS` for pre-Phase-2 DBs); `upsert()` does
   generic `INSERT OR REPLACE`; `read_table()` reads back. `latest_date()` returns the
@@ -88,14 +92,17 @@ after a split rescales deep history) forces a full re-fetch of everything.
   (gold/oil, copper/gold, VIX level + sma20 ratio, 10y yield, 10y-5y spread, VVIX
   level, GSCI sma20 ratio, dollar index, BTC sma20 ratio) from a dict of close-price
   Series, aligned on the date union; series absent from the dict are skipped.
-- **`sentiment.py`** — `score_headlines(model=…)` scores on the `[-3, 3]` scale via
-  one of two lazily-loaded backends behind a shared lock: NLTK VADER (default, mean
-  compound × 3) or FinBERT (`P(pos) − P(neg)` × 3, opt-in `sentiment` extra). Backend
-  defaults to `config.SENTIMENT_MODEL`.
-- **`analyst.py`** — `build_sentiment_row()` assembles a one-row Table-2 frame
+- **`sentiment.py`** — `score_texts(model=…)` scores each headline on the `[-3, 3]`
+  scale via one of two lazily-loaded backends behind a shared lock: NLTK VADER (default,
+  compound × 3) or FinBERT (`P(pos) − P(neg)` × 3, opt-in `sentiment` extra);
+  `score_headlines()` is their mean. Backend defaults to `config.SENTIMENT_MODEL`.
+- **`analyst.py`** — `build_sentiment()` assembles a one-row Table-2 frame
   (recommendation mean, news sentiment over yfinance + German headlines, put/call,
-  EPS revisions, analyst target, IV skew); these are stored/displayed only, not
-  model features.
+  EPS revisions, analyst target, IV skew) **and** the scored per-article records behind
+  the news score (fetched/scored once; the row's aggregate is the mean over all fetched,
+  the records are the display subset — 7-day yfinance + undated German — for the UI
+  headline expander). `build_sentiment_row()` is the row-only wrapper. Stored/displayed
+  only, not model features.
 - **`options.py`** — `put_call_ratio()` and `iv_skew()` feature-facing wrappers over
   the fetches.
 - **`regime.py`** — `detect_regime()` classifies the current market (Rising / Neutral /
@@ -293,7 +300,8 @@ after a split rescales deep history) forces a full re-fetch of everything.
   sentiment → forecast sized to the book (`apply_book_limits`) + overlay + the strategy's
   value/cost-aware actions (`_strategy_actions`: `rules.apply_guardrails` for default;
   `_agg_stop_loss` + `_agg_take_profit` + `trim_overweight` for aggressive; on a deep copy).
-  Powers the Live tab.
+  Returns `(forecasts, sentiment_df, actions, sentiment_headlines)` — the last a per-ticker
+  dict of scored news records for the headline expander. Powers the Live tab.
 - **`cli.py`** — `concinvest {info,update,run,notify,validate}`; `update --sentiment` runs
   `daily_etl` (the daily cron entry, wrapped by `scripts/daily_update.sh`).
 

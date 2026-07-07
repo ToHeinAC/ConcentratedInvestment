@@ -20,6 +20,49 @@ def test_iv_at_handles_empty():
     assert fetch._iv_at(None, 100.0) is None
 
 
+class _FakeTicker:
+    def __init__(self, news):
+        self._news = news
+
+    def get_news(self, count=10):
+        return self._news
+
+
+def test_fetch_news_items_handles_both_schemas(monkeypatch):
+    news = [
+        {"title": "Flat schema headline", "link": "https://ex.com/a",
+         "providerPublishTime": 1_700_000_000},
+        {"content": {"title": "Nested schema headline",
+                     "canonicalUrl": {"url": "https://ex.com/b"},
+                     "pubDate": "2026-07-01T09:00:00Z"}},
+        {"content": {}},  # no title -> skipped
+    ]
+    monkeypatch.setattr(fetch.yf, "Ticker", lambda t: _FakeTicker(news))
+    monkeypatch.setattr(fetch.time, "sleep", lambda *_: None)
+
+    items = fetch.fetch_news_items("SIE.DE")
+    assert [i["title"] for i in items] == ["Flat schema headline", "Nested schema headline"]
+    assert items[0]["link"] == "https://ex.com/a"
+    assert items[1]["link"] == "https://ex.com/b"
+    assert items[0]["published"].year == 2023  # epoch 1.7e9 -> 2023
+    assert items[1]["published"].date().isoformat() == "2026-07-01"
+    # The title-only wrapper still returns plain strings.
+    assert fetch.fetch_news_headlines("SIE.DE") == [i["title"] for i in items]
+
+
+def test_parse_finanznachrichten_items_resolves_links():
+    html = """
+    <html><body>
+      <a class="news-headline" href="/nachrichten-1">Siemens hebt Jahresprognose deutlich an</a>
+    </body></html>
+    """
+    items = fetch._parse_finanznachrichten_items(html, max_items=10)
+    assert items[0]["link"] == "https://www.finanznachrichten.de/nachrichten-1"
+    assert items[0]["published"] is None
+    # The title-only wrapper still returns plain strings (back-compat).
+    assert fetch._parse_finanznachrichten(html, max_items=10) == [items[0]["title"]]
+
+
 def test_parse_finanznachrichten_extracts_headlines():
     html = """
     <html><body>

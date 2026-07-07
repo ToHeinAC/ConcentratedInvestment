@@ -44,6 +44,17 @@ def test_sentiment_sign_for_obvious_text():
     assert pos > neg
 
 
+def test_score_texts_per_headline_and_mean_consistency():
+    heads = ["Company posts record profit, raises guidance",
+             "Company collapses amid fraud scandal and huge losses"]
+    scores = sentiment.score_texts(heads)
+    assert len(scores) == 2
+    assert scores[0] > 0 > scores[1]  # positive first, negative second
+    # score_headlines is exactly the mean of the per-headline scores.
+    assert sentiment.score_headlines(heads) == sum(scores) / len(scores)
+    assert sentiment.score_texts([]) == []
+
+
 def test_store_upsert_roundtrip(tmp_path):
     db = tmp_path / "t.sqlite"
     conn = store.connect(db)
