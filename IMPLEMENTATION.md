@@ -121,7 +121,9 @@ unless changed.
 - **Sentiment backends** — `score_headlines(model=…)` selects VADER (default) or
   FinBERT (`P(pos) − P(neg)` scaled to ±3), both lazy-loaded. German headlines from
   `finanznachrichten.de` (per-stock `tickers.GERMAN_QUERY`) are appended to the
-  yfinance feed before scoring.
+  yfinance feed before scoring. Sibling-company headlines (`tickers.NEWS_EXCLUDE`,
+  matched whitespace-insensitively) are dropped first so, e.g., Siemens Energy /
+  Healthineers news does not taint Siemens AG (`SIE.DE`) sentiment.
 - **New live signals** — `sentiment_analyst` gains `eps_revision_up_7d/down_7d`,
   `analyst_target_mean`, `iv_skew` (OTM-put − ATM-call IV). These have no usable
   history, so they are **stored/displayed only**, not model features.

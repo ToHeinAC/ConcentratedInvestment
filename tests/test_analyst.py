@@ -52,6 +52,37 @@ def test_build_sentiment_row_and_records(monkeypatch):
     assert all("link" in r and "score" in r for r in records)
 
 
+def test_siemens_energy_sibling_news_excluded(monkeypatch):
+    """Siemens Energy / Healthineers headlines must not feed SIE.DE sentiment."""
+    _stub_fetch(monkeypatch)
+    as_of = dt.date(2026, 7, 7)
+    utc = dt.timezone.utc
+    yf_items = [{"title": "Siemens AG raises full-year guidance",
+                 "link": "https://ex.com/sie", "published": dt.datetime(2026, 7, 5, tzinfo=utc)}]
+    # finanznachrichten collapses spaces -> "SiemensEnergy"; must still be dropped.
+    de_items = [
+        {"title": "SiemensEnergy-Aktie: Warnsignal oder Mega-Einstiegschance?",
+         "link": "https://fn.de/enr", "published": None},
+        {"title": "Siemens Healthineers meldet Ruckgang", "link": "https://fn.de/shl",
+         "published": None},
+        {"title": "Siemens gewinnt Grossauftrag", "link": "https://fn.de/sie",
+         "published": None},
+    ]
+    monkeypatch.setattr(analyst.fetch, "fetch_news_items", lambda _t: yf_items)
+    monkeypatch.setattr(analyst.fetch, "fetch_german_news_items", lambda _q: de_items)
+
+    row, records = analyst.build_sentiment("SIE.DE", as_of=as_of)
+
+    titles = [r["title"] for r in records]
+    assert "Siemens AG raises full-year guidance" in titles
+    assert "Siemens gewinnt Grossauftrag" in titles
+    assert not any("Energy" in t or "Healthineers" in t for t in titles)
+    # Aggregate score is the mean over the retained (non-sibling) articles only.
+    kept = ["Siemens AG raises full-year guidance", "Siemens gewinnt Grossauftrag"]
+    expected = sum(sentiment.score_texts(kept)) / len(kept)
+    assert abs(row["news_sentiment_score"].iloc[0] - expected) < 1e-9
+
+
 def test_build_sentiment_row_wrapper_matches(monkeypatch):
     _stub_fetch(monkeypatch)
     monkeypatch.setattr(analyst.fetch, "fetch_news_items", lambda _t: [])

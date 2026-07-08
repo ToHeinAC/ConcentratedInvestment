@@ -98,3 +98,13 @@ GERMAN_QUERY: dict[str, str] = {
     "TSLA": "Tesla",
     "005930.KS": "Samsung Electronics",
 }
+
+# Sibling / related companies whose news must NOT be attributed to the portfolio
+# stock. Siemens Energy AG (ENR.DE) was spun off from Siemens AG in 2020 and is a
+# separately-listed company; Siemens Healthineers and Siemens Gamesa are likewise
+# distinct entities. Because the German search is a plain substring match on
+# "Siemens", it otherwise pulls all of them in. Titles containing any of these terms
+# are dropped from the sentiment feed (matched case- and whitespace-insensitively).
+NEWS_EXCLUDE: dict[str, tuple[str, ...]] = {
+    "SIE.DE": ("Siemens Energy", "Siemens Healthineers", "Siemens Gamesa"),
+}

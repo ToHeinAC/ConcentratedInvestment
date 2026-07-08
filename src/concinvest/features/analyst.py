@@ -19,16 +19,31 @@ from ..data import fetch, tickers
 from . import sentiment
 
 
+def _excludes_sibling(title: str, terms: tuple[str, ...]) -> bool:
+    """True if ``title`` mentions a sibling company (e.g. Siemens Energy vs Siemens AG).
+
+    Matched case- and whitespace-insensitively — finanznachrichten's parser collapses
+    spaces (``"SiemensEnergy"``), so both sides are stripped of whitespace before compare.
+    """
+    norm = "".join(title.lower().split())
+    return any("".join(t.lower().split()) in norm for t in terms)
+
+
 def _scored_headlines(ticker: str) -> list[dict]:
     """Fetch yfinance + German news items and attach a per-article sentiment score.
 
     Each record is ``{title, link, published, source, score}`` on the [-3, 3] scale.
+    Sibling-company headlines (``tickers.NEWS_EXCLUDE``) are dropped before scoring so
+    they taint neither the aggregate score nor the display records.
     """
     items = [dict(i, source="yfinance") for i in fetch.fetch_news_items(ticker)]
     query = tickers.GERMAN_QUERY.get(ticker)
     if query:
         items += [dict(i, source="finanznachrichten")
                   for i in fetch.fetch_german_news_items(query)]
+    exclude = tickers.NEWS_EXCLUDE.get(ticker)
+    if exclude:
+        items = [i for i in items if not _excludes_sibling(i["title"], exclude)]
     scores = sentiment.score_texts([i["title"] for i in items])
     for item, s in zip(items, scores):
         item["score"] = s
