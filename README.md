@@ -61,7 +61,7 @@ uv run concinvest run --n 4000          # add --sentiment for live news scoring
 uv run pytest
 
 # Launch the Streamlit app (port 8505 by project convention)
-uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505
+uv run streamlit run src/concinvest/app/streamlit_app.py --server.port 8505 --server.headless False
 ```
 
 The app opens on **Live: Sample Portfolio** — pick a saved portfolio (or start a new one;
