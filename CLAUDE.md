@@ -91,5 +91,11 @@ This project must be implemented efficiently, without unnecessary code or comple
     - docs/ folder for detailed documentation of each component
 - Be aware that whenever the project is progressed by using AI coding tools, a different AI coding tool may be used to confirm best implementation according to the rules, e.g. new code by Claude Code will be critically reviewed by Codex. It is important that the first implementation is as good as possible, to avoid unnecessary work.
 
-### 5.3 Licencing
+### 5.3 Testing
+- Maximum number of tests is 200. Nonetheless, the full codebase (backend, frontend) must be covered adequately.
+- All code must be testable. All tests must be written in python and the pythonic way of implementation.
+- All tests must be written in the `tests/` folder and use `pytest`.
+- Every single test must be written such that at least one proved fail must occur in case the prerequisites or the state differs from the expected base cases. A test only can be accepted if it is proven to fail under incorrect prerequisites or states cases and to pass under corrected ones. 
+
+### 5.4 Licencing
 All implementation must be under the Apache Licence 2.0 or more permissive (e.g. MIT). 
